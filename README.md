@@ -2,6 +2,8 @@
 
 > **还在启动** —— 面向《杀戮尖塔 2》游戏画布的 Windows 简笔画自动绘制工具。
 
+**[⬇️ 前往 Releases 下载 Windows x64 完整版](https://github.com/Kumiko-kmk/HaiZaiQiDong/releases/latest)**
+
 当队友还在讨论路线，而你只想在画布上迅速留下一张“这局一定能赢”的涂鸦时，HaiZaiQiDong 可以把准备好的图案转换成平滑的鼠标轨迹：选图、调整位置与方向、落点，程序便会替你完成绘制。
 
 ![内置预设库](docs/images/preset-library.png)
@@ -37,7 +39,7 @@
 
 ### 📦 使用打包版
 
-1. 下载并解压完整的 `MouseSketchDrawer` 文件夹。
+1. 从 [GitHub Releases](https://github.com/Kumiko-kmk/HaiZaiQiDong/releases/latest) 下载最新版 ZIP，并完整解压 `MouseSketchDrawer` 文件夹。
 2. 双击 `MouseSketchDrawer.exe`。
 3. 打开《杀戮尖塔 2》并进入需要绘图的画布。
 4. 回到工具，在“绘制”页选择一个预设，点击最前方卡片进入就绪状态。
