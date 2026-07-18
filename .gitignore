@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Build / package
+build/
+dist/
+release/
+*.egg-info/
+.eggs/
+
+# Local agent metadata
+.agents/
+.codex/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# OS
+Thumbs.db
+Desktop.ini
