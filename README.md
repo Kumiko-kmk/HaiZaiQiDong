@@ -15,7 +15,7 @@
 游戏中的自由画布很适合交流、整活和给队友打气，但手动画复杂图案既慢又难以复现。HaiZaiQiDong 因此把“画什么”和“怎么画”拆开：
 
 - 预设负责保存图案；
-- 悬浮预览负责决定大小、角度、翻转与落点；
+- 悬浮预览负责决定大小、角度与落点，并跟随当前界面配色；
 - 绘制控制器把曲线连续转换为 Windows 鼠标输入；
 - 任何时候都能用物理鼠标右键取消。
 
@@ -27,7 +27,7 @@
 
 - **20 个内置主题预设**：按战士、猎手、储君、骨妹、鸡煲及其他标签分组展示。
 - **卡牌式预设轮盘**：滚轮、方向键或鼠标点击即可切换，右侧色带可以快速跳转。
-- **所见即所得的落点预览**：在真正绘制前缩放、旋转或翻转图案。
+- **所见即所得的落点预览**：在真正绘制前用键盘缩放、旋转并确认落点。
 - **平滑流式绘制**：以固定像素间距采样曲线，并以稳定速度发送鼠标输入。
 - **自定义画布**：直接手绘新图案，保存后立即出现在预设库中，支持改名与删除。
 - **JSON / SVG 导入**：便于制作、交换和维护更多矢量图案。
@@ -39,14 +39,14 @@
 
 ### 📦 使用打包版
 
-1. 从 [GitHub Releases](https://github.com/Kumiko-kmk/HaiZaiQiDong/releases/latest) 下载最新版 ZIP，并完整解压 `MouseSketchDrawer` 文件夹。
-2. 双击 `MouseSketchDrawer.exe`。
+1. 从 [GitHub Releases](https://github.com/Kumiko-kmk/HaiZaiQiDong/releases/latest) 下载最新版 ZIP，并完整解压 `HaiZaiQiDong` 文件夹。
+2. 双击 `HaiZaiQiDong.exe`。
 3. 打开《杀戮尖塔 2》并进入需要绘图的画布。
 4. 回到工具，在“绘制”页选择一个预设，点击最前方卡片进入就绪状态。
-5. 把半透明预览移动到游戏画布，调整好大小和方向后，单击鼠标左键落点。
+5. 把半透明预览移动到游戏画布，用 `W` / `S` 调整大小、`A` / `D` 调整方向，单击鼠标左键落点；不想绘制时按右键取消。
 6. 等待轨迹完成；若需要紧急停止，按下物理鼠标右键。
 
-> 请分发和移动**整个** `dist\MouseSketchDrawer` 文件夹，不要只复制其中的 EXE。网页界面、预设数据和运行库都在同一目录中。
+> 请分发和移动**整个** `dist\HaiZaiQiDong` 文件夹，不要只复制其中的 EXE。网页界面、预设数据和运行库都在同一目录中。
 
 ### 🧰 从源码运行
 
@@ -93,10 +93,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 | 操作 | 效果 |
 | --- | --- |
-| 鼠标滚轮 | 在 `0.5×` 到 `2.0×` 之间缩放 |
-| 按住右键拖动 | 绕预览中心旋转 |
-| 双击右键 | 依次切换水平翻转、垂直翻转、不翻转 |
+| `W` / `S` | 在 `0.5×` 到 `2.0×` 之间放大 / 缩小 |
+| `A` / `D` | 每次逆时针 / 顺时针旋转 `5°`，按住可连续调整 |
 | 单击并松开左键 | 以当前鼠标位置作为中心，开始绘制 |
+| 单击右键 | 取消当前预览并回到预设选择状态 |
+
+悬浮预览的线条颜色会跟随“设置”页选择的界面配色变化。
 
 ### 3️⃣ 绘制阶段
 
@@ -126,6 +128,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 画布页提供一块 `720 × 360` 的白色手绘区域。按住鼠标左键即可连续画线，程序会利用浏览器提供的合并指针事件保留快速移动时的中间点。
 
 - **清空画布**：擦除当前草稿，从头开始。
+- **上传 SVG**：选择本机 SVG 轮廓图，将矢量路径载入画布预览；可继续手绘修改，再保存为预设。
 - **保存预设**：填写名称，将当前笔迹转换为自定义预设并生成缩略图。
 - **管理预设**：查看自定义项，对其改名或删除；没有自定义预设时按钮会禁用。
 
@@ -195,7 +198,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 运行时数据位于：
 
 ```text
-%APPDATA%\MouseSketchDrawer\
+%APPDATA%\HaiZaiQiDong\
 ├─ presets\
 │  ├─ data\          # 随版本同步的内置预设镜像
 │  ├─ custom\        # 用户自定义预设
@@ -204,7 +207,7 @@ Set-ExecutionPolicy -Scope Process Bypass
    └─ drawing-history.jsonl
 ```
 
-升级或覆盖程序前，通常无需迁移这些数据。若要备份自己的作品，复制 `presets\custom` 和 `_previews` 即可。
+升级或覆盖程序前，通常无需迁移这些数据；新版本首次启动时会自动复制旧 `%APPDATA%\MouseSketchDrawer` 目录中的预设和历史。若要备份自己的作品，复制 `presets\custom` 和 `_previews` 即可。
 
 ## 🏗️ 项目结构与工作方式
 
@@ -219,7 +222,7 @@ tests/                       # 自动化测试
 scripts/setup.ps1            # 创建/修复开发环境
 scripts/run.ps1              # 启动源码版
 scripts/build.ps1            # 构建 Windows onedir 发布包
-MouseSketchDrawer.spec       # PyInstaller 打包配置
+HaiZaiQiDong.spec            # PyInstaller 打包配置
 ```
 
 一次绘制请求大致经过以下链路：
@@ -253,7 +256,7 @@ Web 界面
 产物位于：
 
 ```text
-dist\MouseSketchDrawer\MouseSketchDrawer.exe
+dist\HaiZaiQiDong\HaiZaiQiDong.exe
 ```
 
 PyInstaller 配置会同时收集网页界面、所有内置预设、`pynput` 的 Windows 后端，以及需要时的 Tcl/Tk 运行文件。项目使用 `onedir` 形式，便于检查资源是否齐全，也能避免单文件程序每次启动时重复解压大量资源。

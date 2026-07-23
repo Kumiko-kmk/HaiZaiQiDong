@@ -9,6 +9,7 @@ from core.draw_controller import DrawOutcome, DrawResult
 from core.mouse_controller import MouseButton
 from core.stroke_executor import DrawSettings
 from core.transform import TransformState
+from core.preset_fit import MAX_ZOOM, MIN_ZOOM
 from gui.app_service import AppService
 from gui.state import AppState
 
@@ -132,6 +133,48 @@ class AppServiceTerminationTests(unittest.TestCase):
 
         self.assertEqual(state["drawButton"], "right")
         self.assertEqual(state["message"], "无效的绘制方式。")
+
+    def test_preview_color_is_validated_and_forwarded(self) -> None:
+        service, _router, _controller = self._make_service()
+
+        state = service.set_preview_color("#55b979")
+
+        service.overlay_bridge.set_color.assert_called_once_with("#55B979")
+        self.assertIsNone(state["message"])
+
+        invalid = service.set_preview_color("red")
+        self.assertEqual(invalid["message"], "无效的预览颜色。")
+        self.assertEqual(service.overlay_bridge.set_color.call_count, 1)
+
+    def test_ready_cancel_hides_preview_and_resets_transform(self) -> None:
+        service, router, _controller = self._make_service()
+        observed_states = []
+        service.set_ui_notifier(lambda state: observed_states.append(state["appState"]))
+
+        service._cancel_ready()
+
+        self.assertEqual(service.app_state, AppState.IDLE)
+        router.disable_ready_mode.assert_called_once_with()
+        service.overlay_bridge.hide.assert_called_once_with()
+        service._reset_transform.assert_called_once_with()
+        self.assertEqual(observed_states, ["idle"])
+
+    def test_ready_mode_wires_cancel_callback_and_clamps_keyboard_scaling(self) -> None:
+        service, router, _controller = self._make_service()
+        service._reset_transform = AppService._reset_transform.__get__(service, AppService)
+        service.transform = TransformState(zoom=MAX_ZOOM)
+
+        service._enter_ready()
+        callbacks = router.enable_ready_mode.call_args.kwargs
+        callbacks["on_scale"](1.1)
+
+        self.assertEqual(service.transform.zoom, MAX_ZOOM)
+        self.assertEqual(callbacks["on_cancel"], service._cancel_ready)
+        self.assertNotIn("on_flip", callbacks)
+
+        service.transform.zoom = MIN_ZOOM
+        callbacks["on_scale"](1.0 / 1.1)
+        self.assertEqual(service.transform.zoom, MIN_ZOOM)
 
     def test_history_state_includes_button_and_event_details(self) -> None:
         service, _router, controller = self._make_service()

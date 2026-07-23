@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>鼠标简笔画绘画工具</title>
+  <title>HaiZaiQiDong</title>
+  <link rel="icon" type="image/png" href="assets/HaiZaiQiDong.png" />
   <script>
     (() => {
       let stored = null;
@@ -64,6 +65,8 @@
 
     <main class="content">
       <section class="page page--active" id="page-draw">
+        <div class="draw-drag-zone draw-drag-zone--left pywebview-drag-region" aria-hidden="true"></div>
+        <div class="draw-drag-zone draw-drag-zone--bottom pywebview-drag-region" aria-hidden="true"></div>
         <div id="wheel-root" class="wheel-root"></div>
         <p id="scale-hint" class="scale-hint" hidden></p>
       </section>
@@ -72,6 +75,7 @@
         <div class="canvas-toolbar">
           <div class="canvas-toolbar__drag pywebview-drag-region" aria-hidden="true"></div>
           <div class="canvas-toolbar__actions">
+            <button class="btn btn--canvas" id="btn-canvas-upload-svg" type="button">上传SVG</button>
             <button class="btn btn--canvas" id="btn-canvas-clear" type="button">清空画布</button>
             <button class="btn btn--canvas" id="btn-canvas-save" type="button">保存预设</button>
             <button class="btn btn--canvas" id="btn-manage-presets" type="button" disabled>管理预设</button>
@@ -83,6 +87,7 @@
       </section>
 
       <section class="page" id="page-history" aria-label="历史">
+        <div class="history-drag-rail pywebview-drag-region" aria-hidden="true"></div>
         <button class="window-control history-refresh" id="btn-history-refresh" type="button" aria-label="刷新历史">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19 8v-4l-2 2a8 8 0 1 0 2.2 8" />
@@ -94,6 +99,7 @@
 
       <section class="page" id="page-settings" aria-label="设置">
         <div class="setting-row">
+          <div class="setting-row__drag pywebview-drag-region" aria-hidden="true"></div>
           <span class="setting-label">窗口置顶</span>
           <label class="switch">
             <input type="checkbox" id="topmost-switch" checked />
@@ -102,6 +108,7 @@
         </div>
 
         <div class="setting-row">
+          <div class="setting-row__drag pywebview-drag-region" aria-hidden="true"></div>
           <span class="setting-label">绘制方式</span>
           <div class="draw-button-picker" id="draw-button-picker" role="radiogroup" aria-label="绘制方式">
             <label class="draw-button-option">
@@ -116,6 +123,7 @@
         </div>
 
         <div class="setting-row setting-row--theme">
+          <div class="setting-row__drag pywebview-drag-region" aria-hidden="true"></div>
           <span class="setting-label">界面配色</span>
           <div class="theme-picker" id="theme-picker" role="group" aria-label="界面配色">
             <button class="theme-dot" type="button" data-theme-value="ironclad" aria-label="战士红"></button>
@@ -127,8 +135,10 @@
         </div>
 
         <div class="settings-actions">
+          <div class="settings-actions__drag pywebview-drag-region" aria-hidden="true"></div>
           <button class="btn btn--outline" id="btn-about" type="button">关于</button>
         </div>
+        <div class="settings-drag-fill pywebview-drag-region" aria-hidden="true"></div>
       </section>
     </main>
   </div>
@@ -138,7 +148,7 @@
   <dialog class="dialog" id="about-dialog">
     <span class="dialog-accent" aria-hidden="true"></span>
     <h2>关于</h2>
-    <p>鼠标简笔画绘画工具<br />滚轮切换预设，点击卡片进入就绪；游戏内左键落点绘制。</p>
+    <p>HaiZaiQiDong · 还在启动<br />滚轮切换预设；进入预览后用 W/S 缩放、A/D 旋转，左键落点，右键取消。</p>
     <button class="btn btn--primary" id="btn-about-close" type="button">确定</button>
   </dialog>
 

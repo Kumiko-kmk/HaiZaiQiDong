@@ -64,3 +64,22 @@ class FrozenPresetSyncTests(TestCase):
                 app_paths.presets_data_dir()
 
             self.assertEqual(target.stat().st_mtime_ns, original_mtime)
+
+
+class UserDataPathTests(TestCase):
+    def test_legacy_user_data_is_copied_to_project_named_directory(self) -> None:
+        with TemporaryDirectory() as directory:
+            appdata = Path(directory)
+            legacy = appdata / app_paths.LEGACY_APP_NAME
+            legacy.mkdir()
+            (legacy / "presets.json").write_text("legacy", encoding="utf-8")
+
+            with patch.dict(app_paths.os.environ, {"APPDATA": str(appdata)}):
+                result = app_paths.user_data_root()
+
+            self.assertEqual(result, appdata / "HaiZaiQiDong")
+            self.assertEqual(
+                (result / "presets.json").read_text(encoding="utf-8"),
+                "legacy",
+            )
+            self.assertTrue((legacy / "presets.json").is_file())

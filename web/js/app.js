@@ -23,6 +23,12 @@ function applyTheme(theme, persist = true) {
       // Theme selection still applies when storage is unavailable.
     }
   }
+  const accent = getComputedStyle(document.documentElement)
+    .getPropertyValue("--accent")
+    .trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(accent)) {
+    callApi("set_preview_color", accent);
+  }
 }
 
 function showToast(message) {
@@ -52,12 +58,12 @@ function renderHistory(history) {
   const list = document.getElementById("history-list");
   list.innerHTML = "";
   if (!history.length) {
-    list.innerHTML = '<li class="history-item history-item--empty"><span>暂无记录</span></li>';
+    list.innerHTML = '<li class="history-item history-item--empty pywebview-drag-region"><span>暂无记录</span></li>';
     return;
   }
   for (const entry of history) {
     const li = document.createElement("li");
-    li.className = "history-item";
+    li.className = "history-item pywebview-drag-region";
     const eventCount = Number.isFinite(Number(entry.eventCount)) ? Number(entry.eventCount) : 0;
     const drawButton = entry.drawButton === "left" ? "左键" : "右键";
     const failureDetail = entry.message ? ` · ${entry.message}` : "";
@@ -157,7 +163,7 @@ function renderScaleHint(state) {
   if (!el || !state.transform) return;
   const { zoom, minZoom, maxZoom } = state.transform;
   if (state.appState === "ready") {
-    el.textContent = `缩放 ${zoom}x（屏幕 1/4 默认，范围 ${minZoom}–${maxZoom}，滚轮调整）`;
+    el.textContent = `缩放 ${zoom}x（${minZoom}–${maxZoom}） · W/S 缩放 · A/D 旋转 · 右键取消`;
     el.hidden = false;
   } else {
     el.hidden = true;
@@ -170,6 +176,8 @@ window.app = {
     document.getElementById("topmost-switch").checked = !!state.topmost;
     const manageButton = document.getElementById("btn-manage-presets");
     if (manageButton) manageButton.disabled = state.appState !== "idle";
+    const uploadSvgButton = document.getElementById("btn-canvas-upload-svg");
+    if (uploadSvgButton) uploadSvgButton.disabled = state.appState !== "idle";
     const drawButton = state.drawButton === "left" ? "left" : "right";
     document.querySelectorAll('input[name="draw-button"]').forEach((input) => {
       input.checked = input.value === drawButton;
@@ -222,6 +230,28 @@ function initUi() {
 
   document.getElementById("btn-canvas-clear").addEventListener("click", () => {
     canvasEditor.clear();
+  });
+
+  const uploadSvgButton = document.getElementById("btn-canvas-upload-svg");
+  uploadSvgButton.addEventListener("click", async () => {
+    if (canvasEditor.hasDrawing() && !window.confirm("上传 SVG 会覆盖当前画布内容，是否继续？")) {
+      return;
+    }
+    uploadSvgButton.disabled = true;
+    try {
+      const result = await callApi("load_svg_to_canvas");
+      if (!result || result.status === "cancelled") return;
+      if (result.status !== "loaded") {
+        showToast(result.message || "SVG 加载失败，请重试。");
+        return;
+      }
+      canvasEditor.loadPresetStrokes(result.strokes, result.suggestedName);
+      showToast(result.message || "SVG 已载入画布。");
+    } catch (error) {
+      showToast(error.message || "SVG 加载失败，请重试。");
+    } finally {
+      uploadSvgButton.disabled = !!currentState && currentState.appState !== "idle";
+    }
   });
 
   const manageDialog = document.getElementById("manage-presets-dialog");
@@ -305,7 +335,7 @@ function initUi() {
       showToast("请先在画布上拖动画笔绘制图案。");
       return;
     }
-    nameInput.value = "";
+    nameInput.value = canvasEditor.suggestedName || "";
     showNameError("");
     saveDialog.showModal();
     requestAnimationFrame(() => nameInput.focus());

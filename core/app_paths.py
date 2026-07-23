@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 
-APP_NAME = "MouseSketchDrawer"
+APP_NAME = "HaiZaiQiDong"
+LEGACY_APP_NAME = "MouseSketchDrawer"
 
 
 def is_frozen() -> bool:
@@ -31,8 +32,15 @@ def user_data_root() -> Path:
     appdata = os.environ.get("APPDATA")
     if appdata:
         root = Path(appdata) / APP_NAME
+        legacy_root = Path(appdata) / LEGACY_APP_NAME
     else:
         root = Path.home() / f".{APP_NAME}"
+        legacy_root = Path.home() / f".{LEGACY_APP_NAME}"
+    if not root.exists() and legacy_root.is_dir():
+        try:
+            shutil.copytree(legacy_root, root)
+        except OSError:
+            pass
     root.mkdir(parents=True, exist_ok=True)
     return root
 

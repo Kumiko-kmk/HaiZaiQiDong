@@ -182,15 +182,30 @@ class CanvasPageContractTests(unittest.TestCase):
 
         self.assertIn('data-page="canvas"', html)
         self.assertIn('id="sketch-canvas"', html)
+        self.assertIn('id="btn-canvas-upload-svg"', html)
         self.assertIn('id="btn-canvas-clear"', html)
         self.assertIn('id="btn-canvas-save"', html)
         self.assertIn('id="btn-manage-presets"', html)
         self.assertIn('class="canvas-toolbar__drag pywebview-drag-region"', html)
+        self.assertIn('class="draw-drag-zone draw-drag-zone--left pywebview-drag-region"', html)
+        self.assertIn('class="draw-drag-zone draw-drag-zone--bottom pywebview-drag-region"', html)
+        self.assertIn('class="history-drag-rail pywebview-drag-region"', html)
+        self.assertEqual(html.count('class="setting-row__drag pywebview-drag-region"'), 3)
+        self.assertIn('class="settings-drag-fill pywebview-drag-region"', html)
         self.assertIn('id="save-preset-dialog"', html)
         self.assertIn('id="manage-presets-dialog"', html)
         self.assertIn('id="manage-preset-list"', html)
         self.assertNotIn("拖动画笔创作自定义预设", html)
         self.assertNotIn('<span class="nav-btn__label">预设</span>', html)
+
+        app_js = (index_path.parent / "js" / "app.js").read_text(encoding="utf-8")
+        editor_js = (index_path.parent / "js" / "canvas-editor.js").read_text(encoding="utf-8")
+        self.assertIn('callApi("load_svg_to_canvas")', app_js)
+        self.assertIn('callApi("set_preview_color", accent)', app_js)
+        self.assertIn('history-item pywebview-drag-region', app_js)
+        self.assertIn("W/S 缩放 · A/D 旋转 · 右键取消", app_js)
+        self.assertIn("canvasEditor.suggestedName", app_js)
+        self.assertIn("loadPresetStrokes(strokes", editor_js)
 
 
 if __name__ == "__main__":

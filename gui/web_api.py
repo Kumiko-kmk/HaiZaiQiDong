@@ -51,17 +51,27 @@ class WebApi:
             return self._service.get_state()
         return self._service.import_json(Path(result[0]))
 
-    def import_svg(self) -> Dict[str, Any]:
+    def load_svg_to_canvas(self) -> Dict[str, Any]:
         if self._window is None:
-            return self._service.get_state()
+            return {
+                "status": "error",
+                "suggestedName": "",
+                "strokes": [],
+                "message": "程序窗口尚未就绪。",
+            }
         result = self._window.create_file_dialog(
             webview.OPEN_DIALOG,
             allow_multiple=False,
-            file_types=("SVG files (*.svg)", "All files (*.*)"),
+            file_types=("SVG files (*.svg)",),
         )
         if not result:
-            return self._service.get_state()
-        return self._service.import_svg(Path(result[0]))
+            return {
+                "status": "cancelled",
+                "suggestedName": "",
+                "strokes": [],
+                "message": "",
+            }
+        return self._service.load_svg_to_canvas(Path(result[0]))
 
     def set_topmost(self, enabled: bool) -> Dict[str, Any]:
         state = self._service.set_topmost(enabled)
@@ -71,6 +81,9 @@ class WebApi:
 
     def set_draw_button(self, button: str) -> Dict[str, Any]:
         return self._service.set_draw_button(button)
+
+    def set_preview_color(self, color: str) -> Dict[str, Any]:
+        return self._service.set_preview_color(color)
 
     def close_window(self) -> None:
         """Close the desktop window; the closing event owns application cleanup."""

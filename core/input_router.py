@@ -2,77 +2,91 @@
 
 from __future__ import annotations
 
-import math
 import sys
 import threading
-import time
 from typing import Callable, Optional, Tuple
 
-from core.transform import SCALE_WHEEL_FACTOR
+from pynput import keyboard, mouse
 
-from pynput import mouse
+from core.transform import ROTATION_STEP_DEG, SCALE_STEP_FACTOR
 
 Point = Tuple[float, float]
 VoidCallback = Callable[[], None]
 AnchorCallback = Callable[[Point], None]
 ScaleCallback = Callable[[float], None]
 RotationCallback = Callable[[float], None]
-FlipCallback = Callable[[], None]
 PanelHitTest = Callable[[float, float], bool]
 
+_WM_KEYDOWN = 0x0100
+_WM_KEYUP = 0x0101
+_WM_SYSKEYDOWN = 0x0104
+_WM_SYSKEYUP = 0x0105
 _WM_RBUTTONDOWN = 0x0204
 _WM_RBUTTONUP = 0x0205
-_LLMHF_INJECTED_MASK = 0x00000001 | 0x00000002
+_MOUSE_INJECTED_MASK = 0x00000001 | 0x00000002
+_KEYBOARD_INJECTED_MASK = 0x00000010 | 0x00000002
+_READY_KEYS = {ord("W"), ord("A"), ord("S"), ord("D")}
 
 
 class InputRouter:
     def __init__(self) -> None:
-        self._listener: Optional[mouse.Listener] = None
+        self._mouse_listener: Optional[mouse.Listener] = None
+        self._keyboard_listener: Optional[keyboard.Listener] = None
         self._ready_enabled = False
         self._drawing_enabled = False
         self._panel_hit_test: Optional[PanelHitTest] = None
         self._on_anchor: Optional[AnchorCallback] = None
         self._on_scale: Optional[ScaleCallback] = None
         self._on_rotation: Optional[RotationCallback] = None
-        self._on_flip: Optional[FlipCallback] = None
-        self._on_cancel: Optional[VoidCallback] = None
-        self._cancel_requested = False
+        self._on_ready_cancel: Optional[VoidCallback] = None
+        self._on_draw_cancel: Optional[VoidCallback] = None
+        self._ready_cancel_requested = False
+        self._draw_cancel_requested = False
         self._suppress_physical_right_release = False
-        self._right_dragging = False
-        self._rotation_pivot: Optional[Point] = None
-        self._last_angle_deg = 0.0
-        self._last_right_release_time = 0.0
-        self._double_click_interval = 0.35
-        self._lock = threading.Lock()
+        self._suppressed_ready_keys: set[int] = set()
+        self._position_lock = threading.Lock()
         self._mode_lock = threading.Lock()
         self._latest_position: Point = (0.0, 0.0)
 
     @property
     def position(self) -> Point:
-        with self._lock:
+        with self._position_lock:
             return self._latest_position
 
     def start_base(self) -> None:
-        if self._listener is None:
-            platform_options = {}
+        if self._mouse_listener is None:
+            options = {}
             if sys.platform == "win32":
-                platform_options["win32_event_filter"] = self._handle_win32_event
-            self._listener = mouse.Listener(
+                options["win32_event_filter"] = self._handle_win32_mouse_event
+            self._mouse_listener = mouse.Listener(
                 on_move=self._handle_move,
                 on_click=self._handle_click,
-                on_scroll=self._handle_scroll,
-                **platform_options,
+                **options,
             )
-            self._listener.start()
+            self._mouse_listener.start()
+
+        if self._keyboard_listener is None:
+            options = {}
+            if sys.platform == "win32":
+                options["win32_event_filter"] = self._handle_win32_keyboard_event
+            self._keyboard_listener = keyboard.Listener(
+                on_press=self._handle_key_press,
+                **options,
+            )
+            self._keyboard_listener.start()
 
     def stop(self) -> None:
         self.disable_ready_mode()
         self.disable_drawing_mode()
-        if self._listener is not None:
-            self._listener.stop()
-            self._listener = None
+        if self._mouse_listener is not None:
+            self._mouse_listener.stop()
+            self._mouse_listener = None
+        if self._keyboard_listener is not None:
+            self._keyboard_listener.stop()
+            self._keyboard_listener = None
         with self._mode_lock:
             self._suppress_physical_right_release = False
+            self._suppressed_ready_keys.clear()
 
     def enable_ready_mode(
         self,
@@ -81,51 +95,46 @@ class InputRouter:
         on_anchor: AnchorCallback,
         on_scale: ScaleCallback,
         on_rotation: RotationCallback,
-        on_flip: FlipCallback,
+        on_cancel: VoidCallback,
     ) -> None:
         self.disable_drawing_mode()
-        self._panel_hit_test = panel_hit_test
-        self._on_anchor = on_anchor
-        self._on_scale = on_scale
-        self._on_rotation = on_rotation
-        self._on_flip = on_flip
-        self._ready_enabled = True
+        with self._mode_lock:
+            self._panel_hit_test = panel_hit_test
+            self._on_anchor = on_anchor
+            self._on_scale = on_scale
+            self._on_rotation = on_rotation
+            self._on_ready_cancel = on_cancel
+            self._ready_cancel_requested = False
+            self._ready_enabled = True
 
     def disable_ready_mode(self) -> None:
-        self._ready_enabled = False
-        self._right_dragging = False
-        self._rotation_pivot = None
+        with self._mode_lock:
+            self._ready_enabled = False
+            self._panel_hit_test = None
+            self._on_anchor = None
+            self._on_scale = None
+            self._on_rotation = None
+            self._on_ready_cancel = None
+            self._ready_cancel_requested = False
 
     def enable_drawing_mode(self, *, on_cancel: VoidCallback) -> None:
         """Listen for one physical right-button press while drawing."""
         self.disable_ready_mode()
         with self._mode_lock:
-            self._on_cancel = on_cancel
-            self._cancel_requested = False
+            self._on_draw_cancel = on_cancel
+            self._draw_cancel_requested = False
             self._drawing_enabled = True
 
     def disable_drawing_mode(self) -> None:
-        """Stop accepting cancel requests but keep a pending release suppressed."""
+        """Stop accepting cancel requests but keep pending releases suppressed."""
         with self._mode_lock:
             self._drawing_enabled = False
-            self._on_cancel = None
-            self._cancel_requested = False
+            self._on_draw_cancel = None
+            self._draw_cancel_requested = False
 
     def _handle_move(self, x: float, y: float) -> None:
-        with self._lock:
+        with self._position_lock:
             self._latest_position = (float(x), float(y))
-        if not self._ready_enabled or not self._right_dragging or self._rotation_pivot is None:
-            return
-        px, py = self._rotation_pivot
-        angle = math.degrees(math.atan2(y - py, x - px))
-        delta = angle - self._last_angle_deg
-        if delta > 180:
-            delta -= 360
-        elif delta < -180:
-            delta += 360
-        if abs(delta) > 0.05 and self._on_rotation is not None:
-            self._on_rotation(delta)
-        self._last_angle_deg = angle
 
     def _handle_click(
         self,
@@ -137,80 +146,128 @@ class InputRouter:
     ) -> None:
         with self._mode_lock:
             drawing_enabled = self._drawing_enabled
+            ready_enabled = self._ready_enabled
+            panel_hit_test = self._panel_hit_test
+            on_anchor = self._on_anchor
+
         if drawing_enabled:
             if button is mouse.Button.right and pressed and not injected:
-                self._request_cancel_once()
+                self._request_draw_cancel_once()
             return
+        if not ready_enabled:
+            return
+        if button is mouse.Button.right and pressed and not injected:
+            self._request_ready_cancel_once()
+            return
+        if panel_hit_test is not None and panel_hit_test(x, y):
+            return
+        if button is mouse.Button.left and not pressed and on_anchor is not None:
+            on_anchor((float(x), float(y)))
 
-        if not self._ready_enabled:
-            return
-        if self._panel_hit_test is not None and self._panel_hit_test(x, y):
-            return
+    def _handle_key_press(self, key: keyboard.Key | keyboard.KeyCode) -> None:
+        char = getattr(key, "char", None)
+        if isinstance(char, str) and len(char) == 1:
+            self._dispatch_ready_key(char.upper())
 
-        if button is mouse.Button.right:
-            if pressed:
-                self._right_dragging = True
-                with self._lock:
-                    self._rotation_pivot = self._latest_position
-                px, py = self._rotation_pivot
-                self._last_angle_deg = math.degrees(math.atan2(y - py, x - px))
-            else:
-                now = time.time()
-                if now - self._last_right_release_time <= self._double_click_interval:
-                    if self._on_flip is not None:
-                        self._on_flip()
-                self._last_right_release_time = now
-                self._right_dragging = False
-                self._rotation_pivot = None
-            return
-
-        if button is mouse.Button.left and not pressed:
-            if self._on_anchor is not None:
-                self._on_anchor((float(x), float(y)))
-
-    def _handle_scroll(self, x: float, y: float, _dx: float, dy: float) -> None:
-        if not self._ready_enabled or self._on_scale is None:
-            return
-        if self._panel_hit_test is not None and self._panel_hit_test(x, y):
-            return
-        factor = SCALE_WHEEL_FACTOR if dy > 0 else 1.0 / SCALE_WHEEL_FACTOR
-        self._on_scale(factor)
-
-    def _request_cancel_once(self) -> None:
-        callback: Optional[VoidCallback]
+    def _dispatch_ready_key(self, char: str) -> bool:
         with self._mode_lock:
-            if not self._drawing_enabled or self._cancel_requested:
+            if not self._ready_enabled:
+                return False
+            on_scale = self._on_scale
+            on_rotation = self._on_rotation
+
+        if char == "W" and on_scale is not None:
+            on_scale(SCALE_STEP_FACTOR)
+        elif char == "S" and on_scale is not None:
+            on_scale(1.0 / SCALE_STEP_FACTOR)
+        elif char == "A" and on_rotation is not None:
+            on_rotation(-ROTATION_STEP_DEG)
+        elif char == "D" and on_rotation is not None:
+            on_rotation(ROTATION_STEP_DEG)
+        else:
+            return False
+        return True
+
+    def _request_ready_cancel_once(self) -> None:
+        with self._mode_lock:
+            if not self._ready_enabled or self._ready_cancel_requested:
                 return
-            self._cancel_requested = True
-            callback = self._on_cancel
+            self._ready_cancel_requested = True
+            callback = self._on_ready_cancel
         if callback is not None:
             callback()
 
-    def _handle_win32_event(self, msg: int, data) -> bool:
-        """Suppress a physical cancel click while allowing injected drawing input."""
+    def _request_draw_cancel_once(self) -> None:
+        with self._mode_lock:
+            if not self._drawing_enabled or self._draw_cancel_requested:
+                return
+            self._draw_cancel_requested = True
+            callback = self._on_draw_cancel
+        if callback is not None:
+            callback()
+
+    def _handle_win32_mouse_event(self, msg: int, data) -> bool:
+        """Suppress physical right-click cancellation while allowing injected drawing."""
         if msg not in (_WM_RBUTTONDOWN, _WM_RBUTTONUP):
             return True
-        if int(data.flags) & _LLMHF_INJECTED_MASK:
+        if int(data.flags) & _MOUSE_INJECTED_MASK:
             return True
 
         if msg == _WM_RBUTTONDOWN:
             with self._mode_lock:
-                if not self._drawing_enabled:
+                drawing_enabled = self._drawing_enabled
+                ready_enabled = self._ready_enabled
+                if not drawing_enabled and not ready_enabled:
                     return True
                 self._suppress_physical_right_release = True
-            self._request_cancel_once()
-            self._suppress_current_event()
+            if drawing_enabled:
+                self._request_draw_cancel_once()
+            else:
+                self._request_ready_cancel_once()
+            self._suppress_mouse_event()
             return False
 
         with self._mode_lock:
             should_suppress = self._suppress_physical_right_release
             self._suppress_physical_right_release = False
         if should_suppress:
-            self._suppress_current_event()
+            self._suppress_mouse_event()
             return False
         return True
 
-    def _suppress_current_event(self) -> None:
-        listener = self._listener
-        if listener is not None:
-            listener.suppress_event()
+    def _handle_win32_keyboard_event(self, msg: int, data) -> bool:
+        """Handle and suppress physical WASD preview controls on Windows."""
+        if msg not in (_WM_KEYDOWN, _WM_KEYUP, _WM_SYSKEYDOWN, _WM_SYSKEYUP):
+            return True
+        if int(data.flags) & _KEYBOARD_INJECTED_MASK:
+            return True
+        vk_code = int(data.vkCode)
+        if vk_code not in _READY_KEYS:
+            return True
+
+        if msg in (_WM_KEYDOWN, _WM_SYSKEYDOWN):
+            with self._mode_lock:
+                ready_enabled = self._ready_enabled
+                if ready_enabled:
+                    self._suppressed_ready_keys.add(vk_code)
+            if not ready_enabled:
+                return True
+            self._dispatch_ready_key(chr(vk_code))
+            self._suppress_keyboard_event()
+            return False
+
+        with self._mode_lock:
+            should_suppress = vk_code in self._suppressed_ready_keys
+            self._suppressed_ready_keys.discard(vk_code)
+        if should_suppress:
+            self._suppress_keyboard_event()
+            return False
+        return True
+
+    def _suppress_mouse_event(self) -> None:
+        if self._mouse_listener is not None:
+            self._mouse_listener.suppress_event()
+
+    def _suppress_keyboard_event(self) -> None:
+        if self._keyboard_listener is not None:
+            self._keyboard_listener.suppress_event()

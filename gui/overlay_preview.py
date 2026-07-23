@@ -24,6 +24,7 @@ class OverlayPreview:
         self._half_extent = 120
         self._last_anchor: Point = (0.0, 0.0)
         self._flatness_px = FLATNESS_PX
+        self._stroke_color = "#00AAFF"
 
     def show(self, preset: Preset, transform: TransformState) -> None:
         self._preset = preset
@@ -47,6 +48,11 @@ class OverlayPreview:
             return
         self._transform = transform
         self._redraw(self._last_anchor)
+
+    def set_color(self, color: str) -> None:
+        self._stroke_color = color
+        if self._visible and self._preset is not None and self._canvas is not None:
+            self._redraw(self._last_anchor)
 
     def update_position(self, anchor: Point) -> None:
         if not self._visible or self._preset is None or self._window is None:
@@ -104,7 +110,13 @@ class OverlayPreview:
             ]
             if len(local_points) >= 2:
                 flat = [coord for point in local_points for coord in point]
-                self._canvas.create_line(*flat, fill="#00AAFF", width=2, smooth=True)
+                self._canvas.create_line(*flat, fill=self._stroke_color, width=2, smooth=True)
             elif len(local_points) == 1:
                 x, y = local_points[0]
-                self._canvas.create_oval(x - 2, y - 2, x + 2, y + 2, outline="#00AAFF")
+                self._canvas.create_oval(
+                    x - 2,
+                    y - 2,
+                    x + 2,
+                    y + 2,
+                    outline=self._stroke_color,
+                )

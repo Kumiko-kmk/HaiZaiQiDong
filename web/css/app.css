@@ -227,10 +227,30 @@ input:focus-visible {
 }
 
 #page-draw {
+  position: relative;
   align-items: center;
   justify-content: center;
   padding: 0;
   background: var(--bg);
+}
+
+.draw-drag-zone {
+  position: absolute;
+  z-index: 4;
+}
+
+.draw-drag-zone--left {
+  top: 32px;
+  bottom: 18px;
+  left: 0;
+  width: 20px;
+}
+
+.draw-drag-zone--bottom {
+  right: 112px;
+  bottom: 0;
+  left: 20px;
+  height: 18px;
 }
 
 #page-settings {
@@ -238,7 +258,16 @@ input:focus-visible {
 }
 
 #page-history {
+  position: relative;
   padding: 32px 0 8px 18px;
+}
+
+.history-drag-rail {
+  position: absolute;
+  top: 32px;
+  bottom: 8px;
+  left: 0;
+  width: 18px;
 }
 
 #page-canvas {
@@ -267,11 +296,13 @@ input:focus-visible {
   z-index: 1;
   display: flex;
   flex: 0 0 auto;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-content: center;
 }
 
 .canvas-toolbar .btn {
-  width: 78px;
+  width: 72px;
   min-height: 26px;
   padding: 4px 9px;
   border-radius: 5px;
@@ -331,8 +362,25 @@ input:focus-visible {
 }
 
 .settings-actions {
+  position: relative;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+.settings-actions__drag {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.settings-actions .btn {
+  position: relative;
+  z-index: 1;
+}
+
+.settings-drag-fill {
+  flex: 1 1 auto;
+  min-height: 18px;
 }
 
 .history-list {
@@ -484,11 +532,23 @@ input:focus-visible {
 }
 
 .setting-row {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-height: 42px;
   border-bottom: 1px solid var(--divider);
+}
+
+.setting-row__drag {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.setting-row > :not(.setting-row__drag) {
+  position: relative;
+  z-index: 1;
 }
 
 .setting-row--theme {

@@ -23,8 +23,6 @@ _TRANSFORM_RE = re.compile(
     r"(matrix|translate|scale)\(([^)]+)\)",
     re.IGNORECASE,
 )
-_ID_SANITIZE_RE = re.compile(r"[\s/\\:*?\"<>|]+")
-
 BRIDGE_GAP_FACTOR = 1.0
 MIN_BRIDGE_GAP = 0.5
 _EPS = 1e-6
@@ -43,12 +41,6 @@ class _ParseContext:
     open_stroke: _StrokeRaw | None = None
 
 
-def preset_id_from_filename(filename: str) -> str:
-    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
-    cleaned = _ID_SANITIZE_RE.sub("_", stem.strip()).strip("_")
-    return cleaned or "imported_svg"
-
-
 def svg_title(svg_text: str) -> str | None:
     try:
         root = ET.fromstring(svg_text)
@@ -63,17 +55,13 @@ def svg_title(svg_text: str) -> str | None:
     return None
 
 
-def svg_to_preset_dict(
+def svg_to_stroke_dicts(
     svg_text: str,
     *,
-    preset_id: str,
-    name: str,
-    description: str = "由 SVG 导入",
-    tags: Sequence[str] | None = None,
-    draw_button: str = "left",
     target_half_extent: float = 60.0,
     bridge_gap_factor: float = BRIDGE_GAP_FACTOR,
-) -> dict:
+) -> List[dict]:
+    """Extract and normalize SVG contours without preset metadata."""
     strokes_raw = extract_svg_strokes(svg_text, bridge_gap_factor=bridge_gap_factor)
     if not strokes_raw:
         raise ValueError("SVG contains no drawable strokes")
@@ -94,15 +82,7 @@ def svg_to_preset_dict(
     if not strokes:
         raise ValueError("SVG contains no valid strokes after normalization")
 
-    return {
-        "id": preset_id.strip(),
-        "name": name.strip(),
-        "description": description,
-        "tags": list(tags or ["导入", "SVG"]),
-        "drawButton": draw_button,
-        "version": 3,
-        "strokes": strokes,
-    }
+    return strokes
 
 
 def extract_svg_strokes(
@@ -166,6 +146,15 @@ def _walk_svg_element(
         r = float(element.get("r", 0))
         if r > 0:
             points = _apply_affine(_circle_points(cx, cy, r), matrix)
+            segments = _points_to_polyline_segment(points)
+            _ingest_stroke(context, _StrokeRaw(segments=segments, closed=True))
+    elif tag == "ellipse":
+        cx = float(element.get("cx", 0))
+        cy = float(element.get("cy", 0))
+        rx = float(element.get("rx", 0))
+        ry = float(element.get("ry", 0))
+        if rx > 0 and ry > 0:
+            points = _apply_affine(_ellipse_points(cx, cy, rx, ry), matrix)
             segments = _points_to_polyline_segment(points)
             _ingest_stroke(context, _StrokeRaw(segments=segments, closed=True))
     elif tag == "rect":
@@ -534,6 +523,22 @@ def _circle_points(cx: float, cy: float, radius: float, segments: int = 32) -> S
         (
             cx + radius * math.cos(2 * math.pi * index / segments),
             cy + radius * math.sin(2 * math.pi * index / segments),
+        )
+        for index in range(segments + 1)
+    ]
+
+
+def _ellipse_points(
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    segments: int = 48,
+) -> StrokePoints:
+    return [
+        (
+            cx + rx * math.cos(2 * math.pi * index / segments),
+            cy + ry * math.sin(2 * math.pi * index / segments),
         )
         for index in range(segments + 1)
     ]

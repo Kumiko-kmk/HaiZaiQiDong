@@ -11,12 +11,11 @@ from typing import Dict, List, Optional, Sequence
 
 from core.app_paths import custom_presets_dir, presets_data_dir
 from presets.models import Preset
-from presets.svg_import import preset_id_from_filename, svg_title, svg_to_preset_dict
 
 
 OWNER_TAG_ORDER = ("战士", "猎手", "储君", "骨妹", "鸡煲", "其他")
 _OWNER_TAG_RANK = {tag: index for index, tag in enumerate(OWNER_TAG_ORDER)}
-MAX_CANVAS_STROKES = 256
+MAX_CANVAS_STROKES = 1024
 MAX_CANVAS_POINTS = 50_000
 MAX_PREVIEW_BYTES = 2 * 1024 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -88,24 +87,6 @@ class PresetRegistry:
         preset = self._load_file(source_path)
         target = self._custom_data_dir / f"{preset.id}.json"
         shutil.copy2(source_path, target)
-        self._presets[preset.id] = preset
-        return preset
-
-    def import_svg(self, source_path: Path) -> Preset:
-        svg_text = source_path.read_text(encoding="utf-8")
-        preset_id = preset_id_from_filename(source_path.stem)
-        name = svg_title(svg_text) or source_path.stem
-        preset_dict = svg_to_preset_dict(
-            svg_text,
-            preset_id=preset_id,
-            name=name,
-            description="由 SVG 导入",
-            tags=["导入", "SVG"],
-        )
-        preset = Preset.from_dict(preset_dict)
-        target = self._custom_data_dir / f"{preset.id}.json"
-        with target.open("w", encoding="utf-8") as handle:
-            json.dump(preset_dict, handle, ensure_ascii=False, indent=2)
         self._presets[preset.id] = preset
         return preset
 
