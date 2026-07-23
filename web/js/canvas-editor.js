@@ -7,6 +7,7 @@ class CanvasPresetEditor {
     this.strokes = [];
     this.activeStroke = null;
     this.activePointerId = null;
+    this.suggestedName = "";
     this.cssWidth = 0;
     this.cssHeight = 0;
     this.pixelRatio = 1;
@@ -46,6 +47,69 @@ class CanvasPresetEditor {
     this.strokes = [];
     this.activeStroke = null;
     this.activePointerId = null;
+    this.suggestedName = "";
+    this._redraw();
+  }
+
+  loadPresetStrokes(strokes, suggestedName = "") {
+    if (!Array.isArray(strokes)) throw new Error("SVG 轮廓数据无效。");
+    this.resize();
+    if (this.cssWidth < 1 || this.cssHeight < 1) {
+      throw new Error("画布尚未就绪，请稍后重试。");
+    }
+
+    const denseStrokes = window.CurveEngine.flattenStrokes(strokes);
+    if (!denseStrokes.length) throw new Error("SVG 中没有可显示的轮廓。");
+    if (denseStrokes.length > 1024) throw new Error("SVG 轮廓数量过多，不能超过 1024 笔。");
+
+    let pointCount = 0;
+    const cleanStrokes = denseStrokes.map((stroke) => {
+      if (!Array.isArray(stroke)) throw new Error("SVG 轮廓数据无效。");
+      const clean = stroke.map((point) => {
+        if (
+          !Array.isArray(point) ||
+          point.length < 2 ||
+          !Number.isFinite(Number(point[0])) ||
+          !Number.isFinite(Number(point[1]))
+        ) {
+          throw new Error("SVG 包含无效坐标。");
+        }
+        pointCount += 1;
+        if (pointCount > 50000) throw new Error("SVG 采样点过多，请适当简化后重试。");
+        return [Number(point[0]), Number(point[1])];
+      });
+      if (!clean.length) throw new Error("SVG 轮廓数据无效。");
+      return clean;
+    });
+
+    const allPoints = cleanStrokes.flat();
+    const xs = allPoints.map(([x]) => x);
+    const ys = allPoints.map(([, y]) => y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const drawingWidth = maxX - minX;
+    const drawingHeight = maxY - minY;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const padding = 0.08;
+    const availableWidth = this.cssWidth * (1 - padding * 2);
+    const availableHeight = this.cssHeight * (1 - padding * 2);
+    const scale = drawingWidth > 1e-9 || drawingHeight > 1e-9
+      ? Math.min(
+        drawingWidth > 1e-9 ? availableWidth / drawingWidth : Infinity,
+        drawingHeight > 1e-9 ? availableHeight / drawingHeight : Infinity,
+      )
+      : 1;
+
+    this.strokes = cleanStrokes.map((stroke) => stroke.map(([x, y]) => [
+      Math.min(1, Math.max(0, (this.cssWidth / 2 + (x - centerX) * scale) / this.cssWidth)),
+      Math.min(1, Math.max(0, (this.cssHeight / 2 + (y - centerY) * scale) / this.cssHeight)),
+    ]));
+    this.activeStroke = null;
+    this.activePointerId = null;
+    this.suggestedName = String(suggestedName || "").trim().slice(0, 40);
     this._redraw();
   }
 

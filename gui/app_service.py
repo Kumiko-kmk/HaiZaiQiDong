@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 import threading
 import time
 from pathlib import Path
@@ -20,7 +21,8 @@ from core.transform import TransformState
 from gui.overlay_bridge import OverlayBridge
 from gui.state import AppState
 from presets.models import Preset
-from presets.registry import get_registry
+from presets.registry import MAX_CANVAS_POINTS, MAX_CANVAS_STROKES, get_registry
+from presets.svg_import import svg_title, svg_to_stroke_dicts
 
 WINDOW_WIDTH = 480
 WINDOW_HEIGHT = 297  # 1 : 0.618 golden ratio
@@ -31,6 +33,8 @@ WindowBounds = Tuple[int, int, int, int]
 UiNotifier = Callable[[Dict[str, Any]], None]
 WindowBoundsProvider = Callable[[], Optional[WindowBounds]]
 PRESET_PREVIEW_DIR = Path("web") / "assets" / "preset-previews"
+MAX_SVG_BYTES = 2 * 1024 * 1024
+PREVIEW_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def preset_preview_url(preset_id: str, custom_preview_path: Optional[Path] = None) -> str:
@@ -130,9 +134,7 @@ class AppService:
         if self.app_state is AppState.IDLE:
             return self._enter_ready()
         if self.app_state is AppState.READY:
-            self._exit_ready()
-            self.app_state = AppState.IDLE
-            self._notify_ui()
+            self._cancel_ready()
         return self._build_state()
 
     def refresh_presets(self) -> Dict[str, Any]:
@@ -154,13 +156,46 @@ class AppService:
         except Exception as exc:
             return self._build_state(message=f"导入失败: {exc}")
 
-    def import_svg(self, path: Path) -> Dict[str, Any]:
+    def load_svg_to_canvas(self, path: Path) -> Dict[str, Any]:
+        """Parse an SVG into an editable canvas draft without persisting it."""
+        if self.app_state is not AppState.IDLE:
+            return {
+                "status": "error",
+                "suggestedName": "",
+                "strokes": [],
+                "message": "请先结束当前绘制状态，再上传 SVG。",
+            }
         try:
-            preset = self.registry.import_svg(path)
-            self.refresh_presets()
-            return self._build_state(message=f"SVG 已导入为预设「{preset.name}」。")
+            if path.suffix.lower() != ".svg":
+                raise ValueError("请选择 SVG 文件。")
+            raw = path.read_bytes()
+            if len(raw) > MAX_SVG_BYTES:
+                raise ValueError("SVG 文件过大，不能超过 2 MB。")
+            try:
+                svg_text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise ValueError("SVG 必须使用 UTF-8 编码。") from exc
+
+            suggested_name = svg_title(svg_text) or path.stem
+            strokes = svg_to_stroke_dicts(svg_text)
+            if len(strokes) > MAX_CANVAS_STROKES:
+                raise ValueError(f"SVG 轮廓数量过多，不能超过 {MAX_CANVAS_STROKES} 笔。")
+            segment_count = sum(len(stroke.get("segments", [])) for stroke in strokes)
+            if segment_count > MAX_CANVAS_POINTS:
+                raise ValueError("SVG 路径过于复杂，请适当简化后重试。")
+            return {
+                "status": "loaded",
+                "suggestedName": suggested_name[:40],
+                "strokes": strokes,
+                "message": f"SVG“{suggested_name}”已载入画布。",
+            }
         except Exception as exc:
-            return self._build_state(message=f"SVG 导入失败: {exc}")
+            return {
+                "status": "error",
+                "suggestedName": "",
+                "strokes": [],
+                "message": f"SVG 加载失败: {exc}",
+            }
 
     def save_canvas_preset(self, payload: object) -> Dict[str, Any]:
         if self.app_state is not AppState.IDLE:
@@ -228,6 +263,13 @@ class AppService:
             return self._build_state(message="无效的绘制方式。")
         return self._build_state()
 
+    def set_preview_color(self, color: str) -> Dict[str, Any]:
+        clean_color = str(color).strip()
+        if PREVIEW_COLOR_RE.fullmatch(clean_color) is None:
+            return self._build_state(message="无效的预览颜色。")
+        self.overlay_bridge.set_color(clean_color.upper())
+        return self._build_state()
+
     def _tick_loop(self) -> None:
         while self._running:
             x, y = self.router.position
@@ -266,7 +308,7 @@ class AppService:
             on_anchor=self._on_anchor,
             on_scale=self._on_scale,
             on_rotation=self._on_rotation,
-            on_flip=self._on_flip,
+            on_cancel=self._cancel_ready,
         )
         self._notify_ui()
         return self._build_state()
@@ -274,6 +316,14 @@ class AppService:
     def _exit_ready(self) -> None:
         self.router.disable_ready_mode()
         self.overlay_bridge.hide()
+
+    def _cancel_ready(self) -> None:
+        if self.app_state is not AppState.READY:
+            return
+        self._exit_ready()
+        self.app_state = AppState.IDLE
+        self._reset_transform()
+        self._notify_ui()
 
     def _on_anchor(self, anchor) -> None:
         if self.app_state is not AppState.READY or self.selected_preset is None:
@@ -332,13 +382,6 @@ class AppService:
         if self.app_state is not AppState.READY:
             return
         self.transform.rotation_deg += delta_deg
-        if self.selected_preset is not None:
-            self.overlay_bridge.set_transform(self.transform)
-
-    def _on_flip(self) -> None:
-        if self.app_state is not AppState.READY:
-            return
-        self.transform.cycle_flip()
         if self.selected_preset is not None:
             self.overlay_bridge.set_transform(self.transform)
 

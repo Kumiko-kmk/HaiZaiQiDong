@@ -11,7 +11,8 @@ from presets.models import Preset
 
 Point = Tuple[float, float]
 
-SCALE_WHEEL_FACTOR = 1.1
+SCALE_STEP_FACTOR = 1.1
+ROTATION_STEP_DEG = 5.0
 SCALE_EPSILON = 1e-6
 
 

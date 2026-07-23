@@ -5,8 +5,9 @@
  * methods setPresets / bringToFront / setEnabled plus the `cards` array.
  */
 
-const SCROLL_THRESHOLD = 50; // wheel pixels per selection step
-const WHEEL_COOLDOWN_MS = 200; // ignore duplicate wheel events from one physical notch
+const WHEEL_STEP_PX = 100; // normalized wheel distance per selection step
+const WHEEL_LINE_PX = 40; // Firefox and some mice report wheel deltas in lines
+const WHEEL_IDLE_RESET_MS = 180; // discard only an incomplete step after scrolling stops
 
 // Stage (card) layout, tuned for the small 480x297 window.
 const CARD_STEP_X = 40; // horizontal spacing per index of distance (up-right stagger)
@@ -90,7 +91,7 @@ class WheelCardMenu {
     this._userInteracted = false;
 
     this._scrollAccumulator = 0;
-    this._lastWheelStepAt = 0;
+    this._wheelIdleTimeout = null;
     this._scrollTimeout = null;
     this._rafId = null;
     this._navResizeRaf = null;
@@ -222,18 +223,38 @@ class WheelCardMenu {
     if (!this.enabled || this.cards.length < 2) return;
     e.preventDefault();
 
-    const now = performance.now();
-    if (now - this._lastWheelStepAt < WHEEL_COOLDOWN_MS) return;
+    let delta = Number(e.deltaY);
+    if (!Number.isFinite(delta) || delta === 0) return;
+    if (e.deltaMode === 1) {
+      delta *= WHEEL_LINE_PX;
+    } else if (e.deltaMode === 2) {
+      delta *= Math.max(1, this.root.clientHeight);
+    }
 
-    this._scrollAccumulator += e.deltaY;
-    if (Math.abs(this._scrollAccumulator) < SCROLL_THRESHOLD) return;
+    // Do not let a partial step in the old direction make the first reverse
+    // gesture feel sticky.
+    if (
+      this._scrollAccumulator !== 0 &&
+      Math.sign(delta) !== Math.sign(this._scrollAccumulator)
+    ) {
+      this._scrollAccumulator = 0;
+    }
+    this._scrollAccumulator += delta;
 
-    // Exactly one card per physical wheel notch: use direction only, never
-    // the magnitude (which can span multiple thresholds in a single event).
-    const step = Math.sign(this._scrollAccumulator);
-    this._scrollAccumulator = 0;
-    this._lastWheelStepAt = now;
-    this._setTarget(this.targetIndex + step, true);
+    if (this._wheelIdleTimeout) clearTimeout(this._wheelIdleTimeout);
+    this._wheelIdleTimeout = setTimeout(() => {
+      this._scrollAccumulator = 0;
+      this._wheelIdleTimeout = null;
+    }, WHEEL_IDLE_RESET_MS);
+
+    const steps = Math.trunc(this._scrollAccumulator / WHEEL_STEP_PX);
+    if (steps === 0) return;
+
+    // Preserve the fractional remainder and append every complete step to the
+    // current animation target. Fast wheels and touchpads can therefore pass
+    // through several cards without waiting for each spring to settle.
+    this._scrollAccumulator -= steps * WHEEL_STEP_PX;
+    this._setTarget(this.targetIndex + steps, true);
   }
 
   _setTarget(virtualIndex, isWheel) {

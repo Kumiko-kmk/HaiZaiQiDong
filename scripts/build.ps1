@@ -29,15 +29,15 @@ if (Test-Path (Join-Path $BundledTk "tk.tcl")) {
 }
 
 Write-Host "Building with PyInstaller (onedir)..."
-& $VenvPython -m PyInstaller MouseSketchDrawer.spec --noconfirm --clean
+& $VenvPython -m PyInstaller HaiZaiQiDong.spec --noconfirm --clean
 
-$OutDir = Join-Path $ProjectRoot "dist\MouseSketchDrawer"
-if (Test-Path (Join-Path $OutDir "MouseSketchDrawer.exe")) {
+$OutDir = Join-Path $ProjectRoot "dist\HaiZaiQiDong"
+if (Test-Path (Join-Path $OutDir "HaiZaiQiDong.exe")) {
     Write-Host ""
     Write-Host "Build complete:"
-    Write-Host "  $OutDir\MouseSketchDrawer.exe"
+    Write-Host "  $OutDir\HaiZaiQiDong.exe"
     Write-Host ""
-    Write-Host "Distribute the entire dist\MouseSketchDrawer folder."
+    Write-Host "Distribute the entire dist\HaiZaiQiDong folder."
 } else {
     throw "Build failed: exe not found."
 }

@@ -67,6 +67,10 @@ class OverlayBridge:
         if self.overlay is not None:
             self._call(lambda: self.overlay.set_transform(transform))  # type: ignore[union-attr]
 
+    def set_color(self, color: str) -> None:
+        if self.overlay is not None:
+            self._call(lambda: self.overlay.set_color(color))  # type: ignore[union-attr]
+
     def destroy(self) -> None:
         if self.overlay is not None:
             self._call(lambda: self.overlay.destroy())  # type: ignore[union-attr]

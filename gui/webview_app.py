@@ -63,7 +63,7 @@ def run_app() -> None:
     service.set_window_bounds_provider(_window_bounds)
 
     window = webview.create_window(
-        "鼠标简笔画绘画工具",
+        "HaiZaiQiDong",
         url=index_html.as_uri(),
         js_api=api,
         width=WINDOW_WIDTH,
