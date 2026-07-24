@@ -1,5 +1,7 @@
 # Runtime dependencies (pinned for reproducible builds)
 pywebview==5.4
+pythonnet==3.1.0
+clr-loader==0.3.1
 pynput==1.8.2
 packaging==25.0
 six==1.17.0

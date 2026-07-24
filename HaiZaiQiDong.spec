@@ -75,6 +75,7 @@ if sys.platform == "win32":
 
 datas = [(str(project_dir / "web"), "web")]
 datas += [(str(project_dir / "presets" / "data"), "presets/data")]
+datas += [(str(project_dir / "pythonnet.runtime.config"), ".")]
 datas += runtime_datas
 
 a = Analysis(
