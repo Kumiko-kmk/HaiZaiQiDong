@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import re
 import threading
 import time
@@ -35,6 +36,7 @@ WindowBoundsProvider = Callable[[], Optional[WindowBounds]]
 PRESET_PREVIEW_DIR = Path("web") / "assets" / "preset-previews"
 MAX_SVG_BYTES = 2 * 1024 * 1024
 PREVIEW_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_LOG = logging.getLogger(__name__)
 
 
 def preset_preview_url(preset_id: str, custom_preview_path: Optional[Path] = None) -> str:
@@ -219,6 +221,56 @@ class AppService:
         except Exception as exc:
             return self._build_state(message=f"保存失败: {exc}")
 
+    def load_custom_preset_for_edit(self, preset_id: str) -> Dict[str, Any]:
+        if self.app_state is not AppState.IDLE:
+            return {
+                "status": "error",
+                "presetId": "",
+                "suggestedName": "",
+                "strokes": [],
+                "message": "请先结束当前绘制状态，再更改预设。",
+            }
+        try:
+            preset = self.registry.get_editable_custom_preset(preset_id)
+            return {
+                "status": "loaded",
+                "presetId": preset.id,
+                "suggestedName": preset.name,
+                "strokes": [stroke.to_dict() for stroke in preset.strokes],
+                "message": f"预设「{preset.name}」已载入画布，保存后将更新原预设。",
+            }
+        except Exception as exc:
+            return {
+                "status": "error",
+                "presetId": "",
+                "suggestedName": "",
+                "strokes": [],
+                "message": f"更改失败: {exc}",
+            }
+
+    def update_canvas_preset(self, preset_id: str, payload: object) -> Dict[str, Any]:
+        if self.app_state is not AppState.IDLE:
+            return self._build_state(message="请先结束当前绘制状态，再保存画布。")
+        if not isinstance(payload, dict):
+            return self._build_state(message="更改失败: 画布数据无效。")
+        try:
+            preview_png = decode_png_data_url(payload.get("previewDataUrl"))
+            preset = self.registry.update_canvas_preset(
+                preset_id,
+                name=str(payload.get("name", "")),
+                strokes=payload.get("strokes"),
+                canvas_width=float(payload.get("canvasWidth", 0)),
+                canvas_height=float(payload.get("canvasHeight", 0)),
+                preview_png=preview_png,
+            )
+            self.filtered_presets = self.registry.list_presets()
+            self._apply_preset(preset)
+            state = self._build_state(message=f"预设「{preset.name}」已更新。")
+            state["updatedPresetId"] = preset.id
+            return state
+        except Exception as exc:
+            return self._build_state(message=f"更改失败: {exc}")
+
     def rename_custom_preset(self, preset_id: str, name: str) -> Dict[str, Any]:
         if self.app_state is not AppState.IDLE:
             return self._build_state(message="请先结束当前绘制状态，再管理预设。")
@@ -302,6 +354,7 @@ class AppService:
         if self.selected_preset is None:
             return self._build_state(message="请先选择简笔画预设。")
         self.app_state = AppState.READY
+        _LOG.info("ready entered preset=%s", self.selected_preset.id)
         self.overlay_bridge.show(self.selected_preset, self.transform)
         self.router.enable_ready_mode(
             panel_hit_test=self._panel_hit_test,
@@ -328,6 +381,7 @@ class AppService:
     def _on_anchor(self, anchor) -> None:
         if self.app_state is not AppState.READY or self.selected_preset is None:
             return
+        _LOG.info("anchor accepted x=%.1f y=%.1f", anchor[0], anchor[1])
         self._exit_ready()
         self._start_draw(anchor)
 
@@ -351,6 +405,12 @@ class AppService:
             if not started:
                 self.router.disable_drawing_mode()
                 self.app_state = AppState.IDLE
+        _LOG.info(
+            "draw start preset=%s anchor=%s started=%s",
+            preset.id,
+            anchor,
+            started,
+        )
         self._notify_ui()
 
     def _on_draw_finish(self, result: DrawResult) -> None:
@@ -358,6 +418,12 @@ class AppService:
             self.router.disable_drawing_mode()
             self.app_state = AppState.IDLE
         self._reset_transform()
+        _LOG.info(
+            "draw finish outcome=%s events=%s failure=%s",
+            result.outcome.value,
+            result.event_count,
+            result.failure_code,
+        )
         message = result.message if result.outcome is DrawOutcome.FAILED else None
         self._notify_ui(message=message)
 

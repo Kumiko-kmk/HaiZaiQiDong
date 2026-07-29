@@ -7,6 +7,7 @@ import unittest
 from core.mouse_controller import MouseButton
 from core.pixel_executor import execute_point_stream
 from core.speed_tier import SpeedProfile
+from tests.support import RecordingMouse
 
 
 FAST_PROFILE = SpeedProfile(
@@ -16,34 +17,9 @@ FAST_PROFILE = SpeedProfile(
 )
 
 
-class FakeMouse:
-    def __init__(self, *, fail_after_moves: int | None = None) -> None:
-        self.events = []
-        self.moves = 0
-        self.fail_after_moves = fail_after_moves
-
-    def ensure_pen_up(self, *, gap_sec: float = 0.0) -> None:
-        self.events.append(("up", gap_sec))
-
-    def move_absolute(self, x: float, y: float) -> None:
-        self.moves += 1
-        self.events.append(("move", x, y))
-        if self.fail_after_moves is not None and self.moves >= self.fail_after_moves:
-            raise RuntimeError("move failed")
-
-    def press(self, button: MouseButton) -> None:
-        self.events.append(("press", button))
-
-    def release(self, button: MouseButton | None = None) -> None:
-        self.events.append(("release", button))
-
-    def best_effort_release_all(self) -> None:
-        self.events.append(("release_all",))
-
-
 class PointExecutorTests(unittest.TestCase):
     def test_single_point_is_drawn_as_a_click(self) -> None:
-        mouse = FakeMouse()
+        mouse = RecordingMouse()
 
         count = execute_point_stream(
             mouse,
@@ -60,7 +36,7 @@ class PointExecutorTests(unittest.TestCase):
         )
 
     def test_draw_order_and_event_count(self) -> None:
-        mouse = FakeMouse()
+        mouse = RecordingMouse()
         count = execute_point_stream(
             mouse,
             [(0, 0), (3, 0), (6, 0)],
@@ -76,7 +52,7 @@ class PointExecutorTests(unittest.TestCase):
         )
 
     def test_failure_always_releases_button(self) -> None:
-        mouse = FakeMouse(fail_after_moves=2)
+        mouse = RecordingMouse(fail_after_moves=2)
         with self.assertRaisesRegex(RuntimeError, "move failed"):
             execute_point_stream(
                 mouse,
@@ -90,7 +66,7 @@ class PointExecutorTests(unittest.TestCase):
         self.assertIn(("release_all",), mouse.events)
 
     def test_cancel_interrupts_a_long_pacing_wait(self) -> None:
-        mouse = FakeMouse()
+        mouse = RecordingMouse()
         abort = threading.Event()
         slow_profile = SpeedProfile(1.0, 3.0, 240.0)
         worker = threading.Thread(

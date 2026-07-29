@@ -9,6 +9,7 @@ let toastTimer = null;
 let canvasEditor = null;
 let currentState = null;
 let manageMode = null;
+let canvasEditingPresetId = null;
 
 function applyTheme(theme, persist = true) {
   const selected = THEMES.has(theme) ? theme : "ironclad";
@@ -145,6 +146,7 @@ function renderManagedPresets() {
         ${preview}
         <span class="managed-preset__name" title="${name}">${name}</span>
         <div class="managed-preset__actions">
+          <button class="managed-preset__button" type="button" data-manage-action="edit">更改</button>
           <button class="managed-preset__button" type="button" data-manage-action="rename-start">重命名</button>
           <button class="managed-preset__button managed-preset__button--danger" type="button" data-manage-action="delete-start">删除</button>
         </div>
@@ -173,6 +175,12 @@ function renderScaleHint(state) {
 window.app = {
   async onStateUpdate(state) {
     currentState = state;
+    if (
+      canvasEditingPresetId &&
+      !state.presets.some((preset) => preset.id === canvasEditingPresetId)
+    ) {
+      canvasEditingPresetId = null;
+    }
     document.getElementById("topmost-switch").checked = !!state.topmost;
     const manageButton = document.getElementById("btn-manage-presets");
     if (manageButton) manageButton.disabled = state.appState !== "idle";
@@ -193,6 +201,7 @@ window.app = {
           const tags = Array.isArray(preset.tags) ? preset.tags : [];
           return card.id === preset.id &&
             card.name === preset.name &&
+            card.previewUrl === (preset.previewUrl || "") &&
             card.tags.length === tags.length &&
             card.tags.every((tag, tagIndex) => tag === tags[tagIndex]);
         });
@@ -227,6 +236,32 @@ function initUi() {
     if (!btn) return;
     showPage(btn.dataset.page);
   });
+
+  const canvasToolButtons = [
+    document.getElementById("btn-canvas-pencil"),
+    document.getElementById("btn-canvas-eraser"),
+  ];
+  const selectCanvasTool = (tool) => {
+    canvasEditor.setTool(tool);
+    for (const button of canvasToolButtons) {
+      const isActive = button.dataset.canvasTool === tool;
+      button.classList.toggle("canvas-tool-button--active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    }
+  };
+  for (const button of canvasToolButtons) {
+    button.addEventListener("click", () => selectCanvasTool(button.dataset.canvasTool));
+  }
+  selectCanvasTool("draw");
+
+  const undoCanvasButton = document.getElementById("btn-canvas-undo");
+  const redoCanvasButton = document.getElementById("btn-canvas-redo");
+  canvasEditor.setHistoryChangeListener(({ canUndo, canRedo }) => {
+    undoCanvasButton.disabled = !canUndo;
+    redoCanvasButton.disabled = !canRedo;
+  });
+  undoCanvasButton.addEventListener("click", () => canvasEditor.undo());
+  redoCanvasButton.addEventListener("click", () => canvasEditor.redo());
 
   document.getElementById("btn-canvas-clear").addEventListener("click", () => {
     canvasEditor.clear();
@@ -273,6 +308,30 @@ function initUi() {
     if (!button || !row) return;
     const presetId = row.dataset.presetId;
     const action = button.dataset.manageAction;
+    if (action === "edit") {
+      if (canvasEditor.hasDrawing() && !window.confirm("更改预设会覆盖当前画布内容，是否继续？")) {
+        return;
+      }
+      button.disabled = true;
+      try {
+        const result = await callApi("load_custom_preset_for_edit", presetId);
+        if (!result || result.status !== "loaded") {
+          showToast(result && result.message ? result.message : "无法载入该预设。");
+          return;
+        }
+        canvasEditor.loadPresetStrokes(result.strokes, result.suggestedName, true);
+        canvasEditingPresetId = result.presetId;
+        manageMode = null;
+        manageDialog.close();
+        showPage("canvas");
+        showToast(result.message);
+      } catch (error) {
+        showToast(error.message || "无法载入该预设。");
+      } finally {
+        if (button.isConnected) button.disabled = false;
+      }
+      return;
+    }
     if (action === "rename-start" || action === "delete-start") {
       manageMode = {id: presetId, type: action.startsWith("rename") ? "rename" : "delete"};
       renderManagedPresets();
@@ -324,6 +383,7 @@ function initUi() {
   const nameInput = document.getElementById("preset-name-input");
   const nameError = document.getElementById("preset-name-error");
   const saveConfirm = document.getElementById("btn-save-confirm");
+  const saveTitle = document.getElementById("save-preset-title");
 
   const showNameError = (message) => {
     nameError.textContent = message || "";
@@ -335,7 +395,9 @@ function initUi() {
       showToast("请先在画布上拖动画笔绘制图案。");
       return;
     }
-    nameInput.value = canvasEditor.suggestedName || "";
+    const editingPreset = customPresets().find((preset) => preset.id === canvasEditingPresetId);
+    nameInput.value = editingPreset ? editingPreset.name : canvasEditor.suggestedName || "";
+    saveTitle.textContent = editingPreset ? "保存预设更改" : "保存自定义预设";
     showNameError("");
     saveDialog.showModal();
     requestAnimationFrame(() => nameInput.focus());
@@ -366,13 +428,18 @@ function initUi() {
     saveConfirm.disabled = true;
     saveConfirm.textContent = "保存中…";
     try {
-      const state = await callApi("save_canvas_preset", payload);
+      const editingPresetId = canvasEditingPresetId;
+      const state = editingPresetId
+        ? await callApi("update_canvas_preset", editingPresetId, payload)
+        : await callApi("save_canvas_preset", payload);
       if (!state) {
         showNameError("无法连接到程序后端。");
         return;
       }
       window.app.onStateUpdate(state);
-      if (state.savedPresetId) {
+      const savedPresetId = editingPresetId ? state.updatedPresetId : state.savedPresetId;
+      if (savedPresetId) {
+        canvasEditingPresetId = null;
         canvasEditor.clear();
         saveDialog.close();
       } else {
@@ -408,6 +475,17 @@ function initUi() {
 
   document.getElementById("btn-close").addEventListener("click", () => {
     callApi("close_window");
+  });
+
+  const dailyJokeDialog = document.getElementById("daily-joke-dialog");
+  document.getElementById("btn-daily-joke").addEventListener("click", () => {
+    document.getElementById("daily-joke-text").textContent =
+      window.DailyJoke.getToday();
+    dailyJokeDialog.showModal();
+  });
+
+  document.getElementById("btn-daily-joke-close").addEventListener("click", () => {
+    dailyJokeDialog.close();
   });
 
   document.getElementById("btn-about").addEventListener("click", () => {

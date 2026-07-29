@@ -100,6 +100,74 @@ class PresetRegistry:
         preview_png: bytes,
     ) -> Preset:
         """Validate and persist a lightweight polyline preset drawn in the UI."""
+        clean_name, normalized_strokes = self._prepare_canvas_content(
+            name=name,
+            strokes=strokes,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            preview_png=preview_png,
+        )
+        preset_id = f"custom_{uuid.uuid4().hex[:16]}"
+        preset_dict = {
+            "id": preset_id,
+            "name": clean_name,
+            "version": 1,
+            "description": "由画布创建",
+            "tags": ["其他", "自定义"],
+            "strokes": normalized_strokes,
+        }
+        preset = Preset.from_dict(preset_dict)
+        self._persist_canvas_preset(preset, preset_dict, preview_png)
+        return preset
+
+    def update_canvas_preset(
+        self,
+        preset_id: str,
+        *,
+        name: str,
+        strokes: object,
+        canvas_width: float,
+        canvas_height: float,
+        preview_png: bytes,
+    ) -> Preset:
+        """Replace an editable custom preset while preserving its identifier."""
+        path = self._managed_custom_path(preset_id)
+        if path is None:
+            raise ValueError("只能更改自定义预设。")
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            raise ValueError("预设文件格式无效。")
+
+        clean_name, normalized_strokes = self._prepare_canvas_content(
+            name=name,
+            strokes=strokes,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            preview_png=preview_png,
+        )
+        data["name"] = clean_name
+        data["strokes"] = normalized_strokes
+        preset = Preset.from_dict(data)
+        if preset.id != str(preset_id):
+            raise ValueError("预设标识不匹配。")
+        self._persist_canvas_preset(preset, data, preview_png, json_target=path)
+        return preset
+
+    def get_editable_custom_preset(self, preset_id: str) -> Preset:
+        if self._managed_custom_path(preset_id) is None:
+            raise ValueError("只能更改自定义预设。")
+        return self._presets[str(preset_id)]
+
+    def _prepare_canvas_content(
+        self,
+        *,
+        name: str,
+        strokes: object,
+        canvas_width: float,
+        canvas_height: float,
+        preview_png: bytes,
+    ) -> tuple[str, list[dict]]:
         clean_name = _clean_preset_name(name)
         if not math.isfinite(canvas_width) or not math.isfinite(canvas_height):
             raise ValueError("画布尺寸无效。")
@@ -153,24 +221,24 @@ class PresetRegistry:
             }
             for stroke in canvas_strokes
         ]
+        return clean_name, normalized_strokes
 
-        preset_id = f"custom_{uuid.uuid4().hex[:16]}"
-        preset_dict = {
-            "id": preset_id,
-            "name": clean_name,
-            "version": 1,
-            "description": "由画布创建",
-            "tags": ["其他", "自定义"],
-            "strokes": normalized_strokes,
-        }
-        preset = Preset.from_dict(preset_dict)
-
+    def _persist_canvas_preset(
+        self,
+        preset: Preset,
+        preset_dict: dict,
+        preview_png: bytes,
+        *,
+        json_target: Optional[Path] = None,
+    ) -> None:
         self._custom_data_dir.mkdir(parents=True, exist_ok=True)
         self.preview_dir.mkdir(parents=True, exist_ok=True)
-        json_target = self._custom_data_dir / f"{preset_id}.json"
-        preview_target = self.preview_dir / f"{preset_id}.png"
+        json_target = json_target or self._custom_data_dir / f"{preset.id}.json"
+        preview_target = self.preview_dir / f"{preset.id}.png"
         json_temp = json_target.with_suffix(".json.tmp")
         preview_temp = preview_target.with_suffix(".png.tmp")
+        previous_json = json_target.read_bytes() if json_target.is_file() else None
+        previous_preview = preview_target.read_bytes() if preview_target.is_file() else None
         try:
             preview_temp.write_bytes(preview_png)
             with json_temp.open("w", encoding="utf-8") as handle:
@@ -184,13 +252,19 @@ class PresetRegistry:
                 except OSError:
                     pass
             try:
-                preview_target.unlink(missing_ok=True)
+                if previous_json is None:
+                    json_target.unlink(missing_ok=True)
+                else:
+                    json_target.write_bytes(previous_json)
+                if previous_preview is None:
+                    preview_target.unlink(missing_ok=True)
+                else:
+                    preview_target.write_bytes(previous_preview)
             except OSError:
                 pass
             raise
 
         self._presets[preset.id] = preset
-        return preset
 
     def rename_custom_preset(self, preset_id: str, name: object) -> Preset:
         path = self._managed_custom_path(preset_id)

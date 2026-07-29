@@ -33,6 +33,5 @@ class OverlayPreviewColorTests(unittest.TestCase):
         self.assertEqual(preview._stroke_color, "#E05252")
         preview._redraw.assert_not_called()
 
-
 if __name__ == "__main__":
     unittest.main()

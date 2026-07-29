@@ -3,47 +3,20 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
 
 from core.draw_controller import DrawOutcome, DrawResult
 from core.mouse_controller import MouseButton
-from core.stroke_executor import DrawSettings
 from core.transform import TransformState
 from core.preset_fit import MAX_ZOOM, MIN_ZOOM
 from gui.app_service import AppService
 from gui.state import AppState
+from tests.support import make_app_service
 
 
 class AppServiceTerminationTests(unittest.TestCase):
     def _make_service(self, *, start_result: bool = True):
-        registry = Mock()
-        router = Mock()
-        controller = Mock()
-        controller.start.return_value = start_result
-        controller.history.list_entries.return_value = []
-        overlay = Mock()
-
-        with (
-            patch("gui.app_service.get_registry", return_value=registry),
-            patch("gui.app_service.InputRouter", return_value=router),
-            patch("gui.app_service.DrawController", return_value=controller),
-            patch("gui.app_service.OverlayBridge", return_value=overlay),
-        ):
-            service = AppService()
-
-        preset = Mock()
-        preset.id = "test"
-        preset.name = "Test"
-        service.selected_preset = preset
-        service._build_settings = Mock(
-            return_value=DrawSettings(
-                transform=TransformState(),
-                button=MouseButton.RIGHT,
-            )
-        )
-        service._reset_transform = Mock()
-        service.app_state = AppState.READY
-        return service, router, controller
+        harness = make_app_service(start_result=start_result)
+        return harness.service, harness.router, harness.controller
 
     def test_physical_cancel_waits_for_draw_finish_before_idle(self) -> None:
         service, router, controller = self._make_service()
@@ -175,6 +148,19 @@ class AppServiceTerminationTests(unittest.TestCase):
         service.transform.zoom = MIN_ZOOM
         callbacks["on_scale"](1.0 / 1.1)
         self.assertEqual(service.transform.zoom, MIN_ZOOM)
+
+    def test_ready_anchor_hides_preview_and_starts_drawing(self) -> None:
+        service, router, controller = self._make_service()
+
+        service._enter_ready()
+        anchor_callback = router.enable_ready_mode.call_args.kwargs["on_anchor"]
+        anchor_callback((320.0, 240.0))
+
+        self.assertEqual(service.app_state, AppState.DRAWING)
+        service.overlay_bridge.hide.assert_called_once_with()
+        controller.start.assert_called_once()
+        session = controller.start.call_args.args[0]
+        self.assertEqual(session.anchor, (320.0, 240.0))
 
     def test_history_state_includes_button_and_event_details(self) -> None:
         service, _router, controller = self._make_service()

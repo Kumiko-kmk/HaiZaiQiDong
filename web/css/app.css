@@ -322,6 +322,67 @@ input:focus-visible {
   color: var(--accent);
 }
 
+.canvas-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.canvas-tool-rail {
+  display: flex;
+  flex: 0 0 38px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0;
+  padding: 12px 5px;
+  border-right: 1px solid var(--divider);
+  background: var(--surface-raised);
+}
+
+.canvas-tool-button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.canvas-tool-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.canvas-tool-button:not(:disabled):hover,
+.canvas-tool-button:not(:disabled):focus-visible {
+  border-color: var(--divider);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.canvas-tool-button--active,
+.canvas-tool-button--active:not(:disabled):hover,
+.canvas-tool-button--active:not(:disabled):focus-visible {
+  border-color: rgba(var(--accent-rgb), 0.45);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+}
+
+.canvas-tool-button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
 .sketch-canvas-wrap {
   position: relative;
   flex: 1 1 auto;
@@ -339,9 +400,16 @@ input:focus-visible {
   width: 100%;
   height: 100%;
   border: 0;
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%232a2b2e' d='M18.8 2.4a2.2 2.2 0 0 1 2.8 2.8L10.2 16.6l-4.6 1.1 1.1-4.6L18.8 2.4ZM4.8 18.5c1.8 0 2.7 1 2.7 2.2-1.5.8-3.4 1.1-5.5.7 1.1-.7 1-2.9 2.8-2.9Z'/%3E%3C/svg%3E") 3 21, crosshair;
   touch-action: none;
   user-select: none;
+}
+
+#sketch-canvas[data-tool="draw"] {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%232a2b2e' d='M18.8 2.4a2.2 2.2 0 0 1 2.8 2.8L10.2 16.6l-4.6 1.1 1.1-4.6L18.8 2.4ZM4.8 18.5c1.8 0 2.7 1 2.7 2.2-1.5.8-3.4 1.1-5.5.7 1.1-.7 1-2.9 2.8-2.9Z'/%3E%3C/svg%3E") 3 21, crosshair;
+}
+
+#sketch-canvas[data-tool="erase"] {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Crect x='5' y='7' width='14' height='10' rx='2' transform='rotate(-45 12 12)' fill='%23fff' stroke='%232a2b2e' stroke-width='2'/%3E%3C/svg%3E") 8 16, cell;
 }
 
 .meta {
@@ -1025,6 +1093,59 @@ input:focus-visible {
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.daily-joke-dialog {
+  width: 440px;
+  height: 286px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  padding: 8px 14px;
+}
+
+.daily-joke-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.daily-joke-heading {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 5px;
+  padding: 0 0 5px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.daily-joke-heading h2 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.daily-joke-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.daily-joke-dialog > .dialog-actions {
+  flex: 0 0 auto;
+  margin-top: 5px;
+}
+
+.daily-joke-dialog > .dialog-actions .btn {
+  min-height: 28px;
+  padding: 4px 12px;
 }
 
 .save-preset-dialog {

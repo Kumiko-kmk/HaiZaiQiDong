@@ -8,7 +8,10 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Callable, List, Sequence, Tuple
 
+from core.curves.flatten import flatten_stroke
+from core.curves.segments import segment_from_dict
 from core.geometry import FLATNESS_PX
+from presets.svg_centerline import FilledShape, filled_shapes_to_centerlines
 
 Point = Tuple[float, float]
 StrokePoints = List[Point]
@@ -62,7 +65,16 @@ def svg_to_stroke_dicts(
     bridge_gap_factor: float = BRIDGE_GAP_FACTOR,
 ) -> List[dict]:
     """Extract and normalize SVG contours without preset metadata."""
-    strokes_raw = extract_svg_strokes(svg_text, bridge_gap_factor=bridge_gap_factor)
+    root = ET.fromstring(svg_text)
+    centerlines = _extract_filled_centerlines(root)
+    if centerlines is None:
+        strokes_raw = extract_svg_strokes(svg_text, bridge_gap_factor=bridge_gap_factor)
+    else:
+        strokes_raw = [
+            _StrokeRaw(segments=_points_to_polyline_segment(points), closed=False)
+            for points in centerlines
+            if points
+        ]
     if not strokes_raw:
         raise ValueError("SVG contains no drawable strokes")
 
@@ -96,6 +108,199 @@ def extract_svg_strokes(
     _walk_svg_element(root, IDENTITY, context)
     _flush_open_stroke(context)
     return context.strokes
+
+
+def _extract_filled_centerlines(root: ET.Element) -> list[StrokePoints] | None:
+    """Return centerlines only when the SVG clearly stores paths as filled silhouettes."""
+    shapes: list[FilledShape] = []
+    eligible = True
+    found_filled_path = False
+
+    initial_style = {
+        "fill": "black",
+        "stroke": "none",
+        "fill-rule": "nonzero",
+        "display": "inline",
+        "visibility": "visible",
+        "opacity": "1",
+        "fill-opacity": "1",
+        "stroke-opacity": "1",
+    }
+
+    def walk(
+        element: ET.Element,
+        parent_matrix: Affine,
+        inherited_style: dict[str, str],
+        inherited_fill_explicit: bool,
+    ) -> None:
+        nonlocal eligible, found_filled_path
+        if not eligible:
+            return
+        matrix = _compose_affine(parent_matrix, _parse_transform_matrix(element.get("transform")))
+        style, fill_explicit = _resolve_element_style(
+            element,
+            inherited_style,
+            inherited_fill_explicit,
+        )
+        if style["display"].strip().lower() == "none":
+            return
+        if style["visibility"].strip().lower() in {"hidden", "collapse"}:
+            return
+        if _style_number(style.get("opacity"), 1.0) <= 0:
+            return
+
+        tag = element.tag.rsplit("}", 1)[-1]
+        if tag in {"line", "polyline"}:
+            if _element_has_geometry(element, tag):
+                eligible = False
+                return
+        elif tag in {"path", "polygon", "rect", "circle", "ellipse"} and _element_has_geometry(element, tag):
+            visible_fill = _paint_is_visible(style["fill"]) and _style_number(
+                style.get("fill-opacity"),
+                1.0,
+            ) > 0
+            visible_stroke = _paint_is_visible(style["stroke"]) and _style_number(
+                style.get("stroke-opacity"),
+                1.0,
+            ) > 0
+            if visible_stroke or not visible_fill or not fill_explicit:
+                eligible = False
+                return
+            polygons = _filled_element_polygons(element, tag, matrix)
+            if not polygons:
+                eligible = False
+                return
+            if tag == "path":
+                found_filled_path = True
+            fill_rule = style.get("fill-rule", "nonzero").strip().lower()
+            shapes.append((polygons, "evenodd" if fill_rule == "evenodd" else "nonzero"))
+
+        for child in element:
+            walk(child, matrix, style, fill_explicit)
+
+    walk(root, IDENTITY, initial_style, False)
+    if not eligible or not found_filled_path or not shapes:
+        return None
+    return filled_shapes_to_centerlines(shapes)
+
+
+def _resolve_element_style(
+    element: ET.Element,
+    inherited: dict[str, str],
+    inherited_fill_explicit: bool,
+) -> tuple[dict[str, str], bool]:
+    style = dict(inherited)
+    fill_explicit = inherited_fill_explicit
+    names = {
+        "fill",
+        "stroke",
+        "fill-rule",
+        "display",
+        "visibility",
+        "opacity",
+        "fill-opacity",
+        "stroke-opacity",
+    }
+    for name in names:
+        raw = element.get(name)
+        if raw is not None:
+            style[name] = raw
+            if name == "fill":
+                fill_explicit = True
+    inline: dict[str, str] = {}
+    for declaration in (element.get("style") or "").split(";"):
+        if ":" not in declaration:
+            continue
+        name, value = declaration.split(":", 1)
+        inline[name.strip().lower()] = value.strip()
+    for name in names:
+        if name in inline:
+            style[name] = inline[name]
+            if name == "fill":
+                fill_explicit = True
+    return style, fill_explicit
+
+
+def _style_number(raw: str | None, fallback: float) -> float:
+    try:
+        return float(raw) if raw is not None else fallback
+    except ValueError:
+        return fallback
+
+
+def _paint_is_visible(raw: str | None) -> bool:
+    value = (raw or "").strip().lower().replace(" ", "")
+    return value not in {"", "none", "transparent", "rgba(0,0,0,0)"}
+
+
+def _element_has_geometry(element: ET.Element, tag: str) -> bool:
+    if tag == "path":
+        return bool((element.get("d") or "").strip())
+    if tag in {"line", "polyline", "polygon"}:
+        return bool((element.get("points") or "").strip()) if tag != "line" else True
+    if tag == "rect":
+        return _style_number(element.get("width"), 0) > 0 and _style_number(element.get("height"), 0) > 0
+    if tag == "circle":
+        return _style_number(element.get("r"), 0) > 0
+    if tag == "ellipse":
+        return _style_number(element.get("rx"), 0) > 0 and _style_number(element.get("ry"), 0) > 0
+    return False
+
+
+def _filled_element_polygons(
+    element: ET.Element,
+    tag: str,
+    matrix: Affine,
+) -> list[StrokePoints]:
+    polygons: list[StrokePoints] = []
+    if tag == "path":
+        for subpath in _parse_path_segments(element.get("d", ""), bridge_gap=0.0):
+            if not subpath.closed:
+                return []
+            transformed = _apply_affine_to_segments(subpath.segments, matrix)
+            points = _flatten_raw_segments(transformed)
+            if len(points) >= 3:
+                polygons.append(points)
+        return polygons
+    if tag == "polygon":
+        points = _apply_affine(_parse_points_attr(element.get("points", "")), matrix)
+        return [points] if len(points) >= 3 else []
+    if tag == "rect":
+        x = _style_number(element.get("x"), 0)
+        y = _style_number(element.get("y"), 0)
+        width = _style_number(element.get("width"), 0)
+        height = _style_number(element.get("height"), 0)
+        return [_apply_affine(
+            [(x, y), (x + width, y), (x + width, y + height), (x, y + height)],
+            matrix,
+        )]
+    if tag == "circle":
+        points = _circle_points(
+            _style_number(element.get("cx"), 0),
+            _style_number(element.get("cy"), 0),
+            _style_number(element.get("r"), 0),
+            segments=64,
+        )
+        return [_apply_affine(points, matrix)]
+    if tag == "ellipse":
+        points = _ellipse_points(
+            _style_number(element.get("cx"), 0),
+            _style_number(element.get("cy"), 0),
+            _style_number(element.get("rx"), 0),
+            _style_number(element.get("ry"), 0),
+            segments=64,
+        )
+        return [_apply_affine(points, matrix)]
+    return []
+
+
+def _flatten_raw_segments(segments: Sequence[SegmentDict]) -> StrokePoints:
+    typed = [segment_from_dict(segment) for segment in segments]
+    return flatten_stroke(
+        typed,
+        flatness_px=max(FLATNESS_PX, 0.75),
+        max_step_px=4.0,
+    )
 
 
 def _walk_svg_element(
