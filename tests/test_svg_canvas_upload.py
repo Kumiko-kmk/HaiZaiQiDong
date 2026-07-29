@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from gui.app_service import AppService, MAX_SVG_BYTES
+from gui.state import AppState
 from gui.web_api import WebApi
 from presets.registry import MAX_CANVAS_STROKES, PresetRegistry
 from presets.svg_import import extract_svg_strokes, svg_to_stroke_dicts
+from tests.support import RegistryTestCase, make_app_service
 
 
 class SvgContourParserTests(unittest.TestCase):
@@ -55,77 +56,89 @@ class SvgContourParserTests(unittest.TestCase):
         self.assertEqual(len(strokes), 283)
         self.assertLessEqual(len(strokes), MAX_CANVAS_STROKES)
 
+    def test_explicit_filled_thick_path_is_reduced_to_its_centerline(self) -> None:
+        svg = '<svg><path fill="#000000" d="M0 0 H100 V20 H0 Z" /></svg>'
 
-class SvgCanvasServiceTests(unittest.TestCase):
+        strokes = svg_to_stroke_dicts(svg)
+        points = [
+            point
+            for stroke in strokes
+            for segment in stroke["segments"]
+            for point in segment.get("points", [])
+        ]
+
+        self.assertEqual(len(strokes), 1)
+        self.assertEqual(len(points), 2)
+        self.assertAlmostEqual(points[0][1], points[1][1], places=3)
+        self.assertAlmostEqual(points[0][0], -60.0, places=3)
+        self.assertAlmostEqual(points[1][0], 60.0, places=3)
+
+    def test_implicit_fill_basic_shape_keeps_existing_contour_behavior(self) -> None:
+        strokes = svg_to_stroke_dicts('<svg><circle cx="10" cy="10" r="8" /></svg>')
+        points = strokes[0]["segments"][0]["points"]
+
+        self.assertEqual(len(strokes), 1)
+        self.assertGreater(len(points), 20)
+        self.assertEqual(points[0], points[-1])
+
+
+class SvgCanvasServiceTests(RegistryTestCase):
+    split_registry = True
+
     def _make_service(self, registry: PresetRegistry) -> AppService:
-        controller = Mock()
-        controller.history.list_entries.return_value = []
-        with (
-            patch("gui.app_service.get_registry", return_value=registry),
-            patch("gui.app_service.InputRouter", return_value=Mock()),
-            patch("gui.app_service.DrawController", return_value=controller),
-            patch("gui.app_service.OverlayBridge", return_value=Mock()),
-        ):
-            return AppService()
+        harness = make_app_service(registry=registry, state=AppState.IDLE)
+        harness.service.selected_preset = None
+        return harness.service
 
     def test_svg_is_loaded_as_draft_without_creating_preset_files(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_dir:
-            root = Path(temporary_dir)
-            data_dir = root / "builtins"
-            custom_dir = root / "custom"
-            source = root / "fallback-name.svg"
-            source.write_text(
-                '<svg xmlns="http://www.w3.org/2000/svg"><title>标题名称</title>'
-                '<path d="M0 0 L10 10" /></svg>',
-                encoding="utf-8",
-            )
-            registry = PresetRegistry(data_dir, custom_dir)
-            service = self._make_service(registry)
+        source = self.root / "fallback-name.svg"
+        source.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg"><title>标题名称</title>'
+            '<path d="M0 0 L10 10" /></svg>',
+            encoding="utf-8",
+        )
+        service = self._make_service(self.registry)
 
-            result = service.load_svg_to_canvas(source)
+        result = service.load_svg_to_canvas(source)
 
-            self.assertEqual(result["status"], "loaded")
-            self.assertEqual(result["suggestedName"], "标题名称")
-            self.assertTrue(result["strokes"])
-            self.assertEqual(list(custom_dir.rglob("*.json")), [])
-            self.assertEqual(list(custom_dir.rglob("*.png")), [])
-            self.assertEqual(registry.list_presets(), [])
+        self.assertEqual(result["status"], "loaded")
+        self.assertEqual(result["suggestedName"], "标题名称")
+        self.assertTrue(result["strokes"])
+        self.assertEqual(list(self.custom_dir.rglob("*.json")), [])
+        self.assertEqual(list(self.custom_dir.rglob("*.png")), [])
+        self.assertEqual(self.registry.list_presets(), [])
 
     def test_filename_is_used_when_svg_has_no_title(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_dir:
-            root = Path(temporary_dir)
-            source = root / "轮廓文件.svg"
-            source.write_text('<svg><path d="M0 0 L1 1" /></svg>', encoding="utf-8")
-            service = self._make_service(PresetRegistry(root / "data", root / "custom"))
+        source = self.root / "轮廓文件.svg"
+        source.write_text('<svg><path d="M0 0 L1 1" /></svg>', encoding="utf-8")
+        service = self._make_service(self.registry)
 
-            result = service.load_svg_to_canvas(source)
+        result = service.load_svg_to_canvas(source)
 
-            self.assertEqual(result["status"], "loaded")
-            self.assertEqual(result["suggestedName"], "轮廓文件")
+        self.assertEqual(result["status"], "loaded")
+        self.assertEqual(result["suggestedName"], "轮廓文件")
 
     def test_invalid_empty_oversized_and_overcomplex_svg_return_errors(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_dir:
-            root = Path(temporary_dir)
-            service = self._make_service(PresetRegistry(root / "data", root / "custom"))
-            cases = {
-                "invalid.svg": "<svg>",
-                "empty.svg": "<svg />",
-                "complex.svg": "<svg>" + "".join(
-                    f'<circle cx="{index}" cy="0" r="1" />'
-                    for index in range(MAX_CANVAS_STROKES + 1)
-                ) + "</svg>",
-            }
-            for filename, content in cases.items():
-                path = root / filename
-                path.write_text(content, encoding="utf-8")
-                with self.subTest(filename=filename):
-                    self.assertEqual(service.load_svg_to_canvas(path)["status"], "error")
+        service = self._make_service(self.registry)
+        cases = {
+            "invalid.svg": "<svg>",
+            "empty.svg": "<svg />",
+            "complex.svg": "<svg>" + "".join(
+                f'<circle cx="{index}" cy="0" r="1" />'
+                for index in range(MAX_CANVAS_STROKES + 1)
+            ) + "</svg>",
+        }
+        for filename, content in cases.items():
+            path = self.root / filename
+            path.write_text(content, encoding="utf-8")
+            with self.subTest(filename=filename):
+                self.assertEqual(service.load_svg_to_canvas(path)["status"], "error")
 
-            oversized = root / "oversized.svg"
-            oversized.write_bytes(b" " * (MAX_SVG_BYTES + 1))
-            result = service.load_svg_to_canvas(oversized)
-            self.assertEqual(result["status"], "error")
-            self.assertIn("2 MB", result["message"])
+        oversized = self.root / "oversized.svg"
+        oversized.write_bytes(b" " * (MAX_SVG_BYTES + 1))
+        result = service.load_svg_to_canvas(oversized)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("2 MB", result["message"])
 
 
 class SvgCanvasWebApiTests(unittest.TestCase):

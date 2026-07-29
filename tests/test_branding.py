@@ -21,6 +21,7 @@ class BrandingContractTests(unittest.TestCase):
         self.assertEqual((reserved, image_type, image_count), (0, 1, 7))
         self.assertIn('name="HaiZaiQiDong"', spec)
         self.assertIn('"HaiZaiQiDong.ico"', spec)
+        self.assertIn("uac_admin=True", spec)
         self.assertIn("HaiZaiQiDong.spec", build)
         self.assertIn("HaiZaiQiDong.exe", build)
         self.assertIn("<title>HaiZaiQiDong</title>", html)

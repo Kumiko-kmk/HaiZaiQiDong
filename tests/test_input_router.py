@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from pynput import keyboard, mouse
 
 from core.input_router import InputRouter
+from core.mouse_controller import DRAW_INPUT_MARKER
 from core.transform import ROTATION_STEP_DEG, SCALE_STEP_FACTOR
 
 
@@ -51,6 +52,20 @@ class InputRouterDrawingModeTests(unittest.TestCase):
         self.assertFalse(router._handle_win32_mouse_event(0x0205, physical))
         self.assertEqual(listener.suppress_event.call_count, 2)
         self.assertTrue(router._handle_win32_mouse_event(0x0205, physical))
+
+    def test_tagged_drawing_right_click_never_cancels_itself(self) -> None:
+        on_cancel = Mock()
+        listener = Mock()
+        router = InputRouter()
+        router._mouse_listener = listener
+        router.enable_drawing_mode(on_cancel=on_cancel)
+        tagged = SimpleNamespace(flags=0, dwExtraInfo=DRAW_INPUT_MARKER)
+
+        self.assertFalse(router._handle_win32_mouse_event(0x0204, tagged))
+        self.assertFalse(router._handle_win32_mouse_event(0x0205, tagged))
+
+        on_cancel.assert_not_called()
+        listener.suppress_event.assert_not_called()
 
 
 class InputRouterReadyModeTests(unittest.TestCase):
@@ -132,13 +147,15 @@ class InputRouterReadyModeTests(unittest.TestCase):
         mouse_listener = Mock()
         keyboard_listener = Mock()
         with (
-            patch("core.input_router.mouse.Listener", return_value=mouse_listener),
+            patch("core.input_router.mouse.Listener", return_value=mouse_listener) as mouse_factory,
             patch("core.input_router.keyboard.Listener", return_value=keyboard_listener),
         ):
             router = InputRouter()
             router.start_base()
+            mouse_factory.call_args.kwargs["on_move"](12, 34)
             router.stop()
 
+        self.assertEqual(router.position, (12.0, 34.0))
         mouse_listener.start.assert_called_once_with()
         keyboard_listener.start.assert_called_once_with()
         mouse_listener.stop.assert_called_once_with()

@@ -33,6 +33,12 @@ class WebApi:
     def save_canvas_preset(self, payload: object) -> Dict[str, Any]:
         return self._service.save_canvas_preset(payload)
 
+    def load_custom_preset_for_edit(self, preset_id: str) -> Dict[str, Any]:
+        return self._service.load_custom_preset_for_edit(preset_id)
+
+    def update_canvas_preset(self, preset_id: str, payload: object) -> Dict[str, Any]:
+        return self._service.update_canvas_preset(preset_id, payload)
+
     def rename_custom_preset(self, preset_id: str, name: str) -> Dict[str, Any]:
         return self._service.rename_custom_preset(preset_id, name)
 

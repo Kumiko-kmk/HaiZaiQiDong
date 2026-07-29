@@ -68,6 +68,9 @@ _RIGHT_DOWN = 0x0008
 _RIGHT_UP = 0x0010
 _VIRTUAL_DESK = 0x4000
 _ABSOLUTE = 0x8000
+# Identifies events emitted by this process even when a hook/driver fails to
+# preserve Windows' generic LLMHF_INJECTED flag.
+DRAW_INPUT_MARKER = 0x48415A51
 
 _SM_XVIRTUALSCREEN = 76
 _SM_YVIRTUALSCREEN = 77
@@ -220,7 +223,14 @@ class MouseController:
         event = _INPUT(
             type=_INPUT_MOUSE,
             value=_INPUTUNION(
-                mi=_MOUSEINPUT(dx=dx, dy=dy, mouseData=0, dwFlags=flags, time=0, dwExtraInfo=None)
+                mi=_MOUSEINPUT(
+                    dx=dx,
+                    dy=dy,
+                    mouseData=0,
+                    dwFlags=flags,
+                    time=0,
+                    dwExtraInfo=DRAW_INPUT_MARKER,
+                )
             ),
         )
         inserted = int(_SEND_INPUT(1, ctypes.byref(event), ctypes.sizeof(_INPUT)))

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from typing import Callable, Optional, Tuple
 
 from pynput import keyboard, mouse
 
+from core.mouse_controller import DRAW_INPUT_MARKER
 from core.transform import ROTATION_STEP_DEG, SCALE_STEP_FACTOR
 
 Point = Tuple[float, float]
@@ -26,6 +28,7 @@ _WM_RBUTTONUP = 0x0205
 _MOUSE_INJECTED_MASK = 0x00000001 | 0x00000002
 _KEYBOARD_INJECTED_MASK = 0x00000010 | 0x00000002
 _READY_KEYS = {ord("W"), ord("A"), ord("S"), ord("D")}
+_LOG = logging.getLogger(__name__)
 
 
 class InputRouter:
@@ -64,6 +67,7 @@ class InputRouter:
                 **options,
             )
             self._mouse_listener.start()
+            _LOG.info("Global mouse listener started")
 
         if self._keyboard_listener is None:
             options = {}
@@ -74,6 +78,7 @@ class InputRouter:
                 **options,
             )
             self._keyboard_listener.start()
+            _LOG.info("Global keyboard listener started")
 
     def stop(self) -> None:
         self.disable_ready_mode()
@@ -152,14 +157,23 @@ class InputRouter:
 
         if drawing_enabled:
             if button is mouse.Button.right and pressed and not injected:
-                self._request_draw_cancel_once()
+                self._request_draw_cancel_once(source="mouse_callback")
             return
         if not ready_enabled:
             return
         if button is mouse.Button.right and pressed and not injected:
             self._request_ready_cancel_once()
             return
-        if panel_hit_test is not None and panel_hit_test(x, y):
+        in_panel = panel_hit_test is not None and panel_hit_test(x, y)
+        if button is mouse.Button.left and not pressed:
+            _LOG.info(
+                "ready left release x=%.1f y=%.1f panel_hit=%s injected=%s",
+                x,
+                y,
+                in_panel,
+                injected,
+            )
+        if in_panel:
             return
         if button is mouse.Button.left and not pressed and on_anchor is not None:
             on_anchor((float(x), float(y)))
@@ -197,12 +211,13 @@ class InputRouter:
         if callback is not None:
             callback()
 
-    def _request_draw_cancel_once(self) -> None:
+    def _request_draw_cancel_once(self, *, source: str = "unknown") -> None:
         with self._mode_lock:
             if not self._drawing_enabled or self._draw_cancel_requested:
                 return
             self._draw_cancel_requested = True
             callback = self._on_draw_cancel
+        _LOG.info("Draw cancellation requested source=%s", source)
         if callback is not None:
             callback()
 
@@ -210,6 +225,11 @@ class InputRouter:
         """Suppress physical right-click cancellation while allowing injected drawing."""
         if msg not in (_WM_RBUTTONDOWN, _WM_RBUTTONUP):
             return True
+        if int(getattr(data, "dwExtraInfo", 0) or 0) == DRAW_INPUT_MARKER:
+            # Do not forward our tagged right-button events to ``on_click``;
+            # they must reach the target application but must never cancel
+            # their own drawing session.
+            return False
         if int(data.flags) & _MOUSE_INJECTED_MASK:
             return True
 
@@ -221,7 +241,7 @@ class InputRouter:
                     return True
                 self._suppress_physical_right_release = True
             if drawing_enabled:
-                self._request_draw_cancel_once()
+                self._request_draw_cancel_once(source="win32_physical_right")
             else:
                 self._request_ready_cancel_once()
             self._suppress_mouse_event()

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import ctypes
 import unittest
 from unittest.mock import patch
 import sys
 
-from core.mouse_controller import InputInjectionError, MouseController, normalize_absolute_coordinate
+from core import mouse_controller
+from core.mouse_controller import (
+    DRAW_INPUT_MARKER,
+    InputInjectionError,
+    MouseController,
+    normalize_absolute_coordinate,
+)
 
 
 class MouseCoordinateTests(unittest.TestCase):
@@ -22,6 +29,23 @@ class MouseCoordinateTests(unittest.TestCase):
         with self.assertRaises(InputInjectionError) as raised:
             MouseController._send_win32(0x0001, operation="test move")
         self.assertEqual(raised.exception.failure_code, "input_injection_failed")
+
+    @unittest.skipUnless(sys.platform == "win32", "Win32 SendInput test")
+    def test_send_input_tags_events_for_router_filter(self) -> None:
+        markers = []
+
+        def capture(_count, pointer, _size):
+            event = ctypes.cast(
+                pointer,
+                ctypes.POINTER(mouse_controller._INPUT),
+            ).contents
+            markers.append(event.value.mi.dwExtraInfo)
+            return 1
+
+        with patch("core.mouse_controller._SEND_INPUT", side_effect=capture):
+            MouseController._send_win32(0x0008, operation="test right press")
+
+        self.assertEqual(markers, [DRAW_INPUT_MARKER])
 
 
 if __name__ == "__main__":

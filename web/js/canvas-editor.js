@@ -1,5 +1,10 @@
 /** Borderless pointer canvas used to create custom polyline presets. */
 
+const CANVAS_ERASER_RADIUS = 11;
+const MAX_CANVAS_STROKES = 1024;
+const CANVAS_HISTORY_LIMIT = 30;
+const CANVAS_HISTORY_POINT_LIMIT = 200000;
+
 class CanvasPresetEditor {
   constructor(canvas) {
     this.canvas = canvas;
@@ -7,10 +12,17 @@ class CanvasPresetEditor {
     this.strokes = [];
     this.activeStroke = null;
     this.activePointerId = null;
+    this.lastEraserPoint = null;
+    this.historyTransaction = null;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.historyChangeListener = null;
+    this.tool = "draw";
     this.suggestedName = "";
     this.cssWidth = 0;
     this.cssHeight = 0;
     this.pixelRatio = 1;
+    this.canvas.dataset.tool = this.tool;
 
     this._bindPointerEvents();
     this.resizeObserver = typeof ResizeObserver === "function"
@@ -43,15 +55,54 @@ class CanvasPresetEditor {
     this._redraw();
   }
 
+  setTool(tool) {
+    if (tool !== "draw" && tool !== "erase") {
+      throw new Error(`未知画布工具：${tool}`);
+    }
+    this._cancelPointerInteraction();
+    this.tool = tool;
+    this.canvas.dataset.tool = tool;
+  }
+
+  setHistoryChangeListener(listener) {
+    this.historyChangeListener = typeof listener === "function" ? listener : null;
+    this._emitHistoryChanged();
+  }
+
+  undo() {
+    this._cancelPointerInteraction();
+    const previous = this.undoStack.pop();
+    if (!previous) return false;
+    this.redoStack.push(this._createSnapshot());
+    this._restoreSnapshot(previous);
+    this._trimHistory();
+    this._emitHistoryChanged();
+    return true;
+  }
+
+  redo() {
+    this._cancelPointerInteraction();
+    const next = this.redoStack.pop();
+    if (!next) return false;
+    this.undoStack.push(this._createSnapshot());
+    this._restoreSnapshot(next);
+    this._trimHistory();
+    this._emitHistoryChanged();
+    return true;
+  }
+
   clear() {
+    this._cancelPointerInteraction();
     this.strokes = [];
-    this.activeStroke = null;
-    this.activePointerId = null;
     this.suggestedName = "";
+    this.undoStack = [];
+    this.redoStack = [];
+    this.historyTransaction = null;
+    this._emitHistoryChanged();
     this._redraw();
   }
 
-  loadPresetStrokes(strokes, suggestedName = "") {
+  loadPresetStrokes(strokes, suggestedName = "", resetHistory = false) {
     if (!Array.isArray(strokes)) throw new Error("SVG 轮廓数据无效。");
     this.resize();
     if (this.cssWidth < 1 || this.cssHeight < 1) {
@@ -60,7 +111,7 @@ class CanvasPresetEditor {
 
     const denseStrokes = window.CurveEngine.flattenStrokes(strokes);
     if (!denseStrokes.length) throw new Error("SVG 中没有可显示的轮廓。");
-    if (denseStrokes.length > 1024) throw new Error("SVG 轮廓数量过多，不能超过 1024 笔。");
+    if (denseStrokes.length > MAX_CANVAS_STROKES) throw new Error("SVG 轮廓数量过多，不能超过 1024 笔。");
 
     let pointCount = 0;
     const cleanStrokes = denseStrokes.map((stroke) => {
@@ -103,13 +154,22 @@ class CanvasPresetEditor {
       )
       : 1;
 
-    this.strokes = cleanStrokes.map((stroke) => stroke.map(([x, y]) => [
+    const nextStrokes = cleanStrokes.map((stroke) => stroke.map(([x, y]) => [
       Math.min(1, Math.max(0, (this.cssWidth / 2 + (x - centerX) * scale) / this.cssWidth)),
       Math.min(1, Math.max(0, (this.cssHeight / 2 + (y - centerY) * scale) / this.cssHeight)),
     ]));
-    this.activeStroke = null;
-    this.activePointerId = null;
+    this._cancelPointerInteraction();
+    const previous = this._createSnapshot();
+    this.strokes = nextStrokes;
     this.suggestedName = String(suggestedName || "").trim().slice(0, 40);
+    if (resetHistory) {
+      this.undoStack = [];
+      this.redoStack = [];
+      this.historyTransaction = null;
+      this._emitHistoryChanged();
+    } else {
+      this._recordHistory(previous);
+    }
     this._redraw();
   }
 
@@ -137,9 +197,18 @@ class CanvasPresetEditor {
       if (event.button !== 0 || this.activePointerId !== null) return;
       event.preventDefault();
       this.activePointerId = event.pointerId;
-      this.activeStroke = [];
-      this.strokes.push(this.activeStroke);
-      this._appendPointerPoint(event, true);
+      this.historyTransaction = {
+        previous: this._createSnapshot(),
+        changed: false,
+      };
+      if (this.tool === "draw") {
+        this.activeStroke = [];
+        this.strokes.push(this.activeStroke);
+        this._appendPointerPoint(event, true);
+      } else {
+        this.lastEraserPoint = null;
+        this._erasePointerPoint(event, true);
+      }
       try {
         this.canvas.setPointerCapture(event.pointerId);
       } catch (_error) {
@@ -148,33 +217,39 @@ class CanvasPresetEditor {
     });
 
     this.canvas.addEventListener("pointermove", (event) => {
-      if (event.pointerId !== this.activePointerId || !this.activeStroke) return;
+      if (event.pointerId !== this.activePointerId) return;
       event.preventDefault();
       const samples = typeof event.getCoalescedEvents === "function"
         ? event.getCoalescedEvents()
         : [event];
-      for (const sample of samples) this._appendPointerPoint(sample, false);
+      for (const sample of samples) {
+        if (this.tool === "draw") {
+          this._appendPointerPoint(sample, false);
+        } else {
+          this._erasePointerPoint(sample, false);
+        }
+      }
     });
 
-    const finishStroke = (event) => {
+    const finishInteraction = (event, applyFinalPoint) => {
       if (event.pointerId !== this.activePointerId) return;
       event.preventDefault();
-      this._appendPointerPoint(event, false);
-      this.activeStroke = null;
-      this.activePointerId = null;
-      try {
-        this.canvas.releasePointerCapture(event.pointerId);
-      } catch (_error) {
-        // The browser may already have released capture.
+      if (applyFinalPoint) {
+        if (this.tool === "draw") {
+          this._appendPointerPoint(event, false);
+        } else {
+          this._erasePointerPoint(event, false);
+        }
       }
+      this._cancelPointerInteraction();
       this._redraw();
     };
-    this.canvas.addEventListener("pointerup", finishStroke);
-    this.canvas.addEventListener("pointercancel", finishStroke);
+    this.canvas.addEventListener("pointerup", (event) => finishInteraction(event, true));
+    this.canvas.addEventListener("pointercancel", (event) => finishInteraction(event, false));
   }
 
   _appendPointerPoint(event, force) {
-    if (!this.activeStroke || this.cssWidth < 1 || this.cssHeight < 1) return;
+    if (!this.activeStroke || this.cssWidth < 1 || this.cssHeight < 1) return false;
     const rect = this.canvas.getBoundingClientRect();
     const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
     const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
@@ -184,10 +259,225 @@ class CanvasPresetEditor {
         (x - last[0]) * this.cssWidth,
         (y - last[1]) * this.cssHeight,
       );
-      if (distance < 1.1) return;
+      if (distance < 1.1) return false;
     }
     this.activeStroke.push([x, y]);
+    if (this.historyTransaction) this.historyTransaction.changed = true;
     this._redraw();
+    return true;
+  }
+
+  _erasePointerPoint(event, force) {
+    if (this.cssWidth < 1 || this.cssHeight < 1) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return false;
+    const point = [
+      Math.min(this.cssWidth, Math.max(0, (event.clientX - rect.left) * this.cssWidth / rect.width)),
+      Math.min(this.cssHeight, Math.max(0, (event.clientY - rect.top) * this.cssHeight / rect.height)),
+    ];
+    if (!force && this.lastEraserPoint) {
+      if (Math.hypot(point[0] - this.lastEraserPoint[0], point[1] - this.lastEraserPoint[1]) < 1.5) {
+        return false;
+      }
+    }
+    this.lastEraserPoint = point;
+    const changed = this._eraseAt(point[0], point[1], CANVAS_ERASER_RADIUS);
+    if (changed) {
+      if (this.historyTransaction) this.historyTransaction.changed = true;
+      this._redraw();
+    }
+    return changed;
+  }
+
+  _eraseAt(centerX, centerY, radius) {
+    const nextStrokes = [];
+    let changed = false;
+    for (const stroke of this.strokes) {
+      const pieces = this._eraseStroke(stroke, centerX, centerY, radius);
+      if (pieces === null) {
+        nextStrokes.push(stroke);
+      } else {
+        changed = true;
+        nextStrokes.push(...pieces);
+      }
+    }
+    if (!changed || nextStrokes.length > MAX_CANVAS_STROKES) return false;
+    this.strokes = nextStrokes;
+    return true;
+  }
+
+  _eraseStroke(stroke, centerX, centerY, radius) {
+    if (!stroke.length) return [];
+    if (stroke.length === 1) {
+      const distance = Math.hypot(
+        stroke[0][0] * this.cssWidth - centerX,
+        stroke[0][1] * this.cssHeight - centerY,
+      );
+      return distance < radius ? [] : null;
+    }
+
+    let intersects = false;
+    for (let index = 1; index < stroke.length; index += 1) {
+      if (this._distanceToSegment(stroke[index - 1], stroke[index], centerX, centerY) < radius) {
+        intersects = true;
+        break;
+      }
+    }
+    if (!intersects) return null;
+
+    const pieces = [];
+    let currentPiece = null;
+    const epsilon = 1e-7;
+    for (let index = 1; index < stroke.length; index += 1) {
+      const start = stroke[index - 1];
+      const end = stroke[index];
+      const intervals = this._outsideCircleIntervals(start, end, centerX, centerY, radius);
+      if (!intervals.length) {
+        currentPiece = null;
+        continue;
+      }
+      for (const [from, to] of intervals) {
+        if (from > epsilon) currentPiece = null;
+        const first = this._lerpPoint(start, end, from);
+        const last = this._lerpPoint(start, end, to);
+        if (!currentPiece || !this._samePoint(currentPiece[currentPiece.length - 1], first)) {
+          currentPiece = [first];
+          pieces.push(currentPiece);
+        }
+        if (!this._samePoint(currentPiece[currentPiece.length - 1], last)) {
+          currentPiece.push(last);
+        }
+        if (to < 1 - epsilon) currentPiece = null;
+      }
+    }
+    return pieces.filter((piece) => piece.length >= 2);
+  }
+
+  _outsideCircleIntervals(start, end, centerX, centerY, radius) {
+    const startX = start[0] * this.cssWidth;
+    const startY = start[1] * this.cssHeight;
+    const deltaX = (end[0] - start[0]) * this.cssWidth;
+    const deltaY = (end[1] - start[1]) * this.cssHeight;
+    const offsetX = startX - centerX;
+    const offsetY = startY - centerY;
+    const quadratic = deltaX * deltaX + deltaY * deltaY;
+    if (quadratic < 1e-12) {
+      return offsetX * offsetX + offsetY * offsetY >= radius * radius ? [[0, 1]] : [];
+    }
+
+    const linear = 2 * (offsetX * deltaX + offsetY * deltaY);
+    const constant = offsetX * offsetX + offsetY * offsetY - radius * radius;
+    const discriminant = linear * linear - 4 * quadratic * constant;
+    const cuts = [0, 1];
+    if (discriminant > 0) {
+      const root = Math.sqrt(discriminant);
+      const first = (-linear - root) / (2 * quadratic);
+      const second = (-linear + root) / (2 * quadratic);
+      if (first > 0 && first < 1) cuts.push(first);
+      if (second > 0 && second < 1) cuts.push(second);
+    }
+    cuts.sort((left, right) => left - right);
+
+    const outside = [];
+    for (let index = 1; index < cuts.length; index += 1) {
+      const from = cuts[index - 1];
+      const to = cuts[index];
+      if (to - from < 1e-9) continue;
+      const middle = (from + to) / 2;
+      const x = offsetX + deltaX * middle;
+      const y = offsetY + deltaY * middle;
+      if (x * x + y * y >= radius * radius) outside.push([from, to]);
+    }
+    return outside;
+  }
+
+  _distanceToSegment(start, end, centerX, centerY) {
+    const startX = start[0] * this.cssWidth;
+    const startY = start[1] * this.cssHeight;
+    const deltaX = (end[0] - start[0]) * this.cssWidth;
+    const deltaY = (end[1] - start[1]) * this.cssHeight;
+    const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+    const projection = lengthSquared > 1e-12
+      ? Math.max(0, Math.min(1, ((centerX - startX) * deltaX + (centerY - startY) * deltaY) / lengthSquared))
+      : 0;
+    return Math.hypot(
+      startX + deltaX * projection - centerX,
+      startY + deltaY * projection - centerY,
+    );
+  }
+
+  _lerpPoint(start, end, amount) {
+    return [
+      start[0] + (end[0] - start[0]) * amount,
+      start[1] + (end[1] - start[1]) * amount,
+    ];
+  }
+
+  _samePoint(first, second) {
+    return Math.abs(first[0] - second[0]) < 1e-9 && Math.abs(first[1] - second[1]) < 1e-9;
+  }
+
+  _cancelPointerInteraction() {
+    const pointerId = this.activePointerId;
+    this._commitHistoryTransaction();
+    this.activeStroke = null;
+    this.activePointerId = null;
+    this.lastEraserPoint = null;
+    if (pointerId === null) return;
+    try {
+      this.canvas.releasePointerCapture(pointerId);
+    } catch (_error) {
+      // The browser may already have released capture.
+    }
+  }
+
+  _createSnapshot() {
+    const strokes = this.strokes.map((stroke) => stroke.map(([x, y]) => [x, y]));
+    return {
+      strokes,
+      suggestedName: this.suggestedName,
+      pointCount: strokes.reduce((total, stroke) => total + stroke.length, 0),
+    };
+  }
+
+  _restoreSnapshot(snapshot) {
+    this.strokes = snapshot.strokes.map((stroke) => stroke.map(([x, y]) => [x, y]));
+    this.suggestedName = snapshot.suggestedName;
+    this._redraw();
+  }
+
+  _commitHistoryTransaction() {
+    const transaction = this.historyTransaction;
+    this.historyTransaction = null;
+    if (transaction?.changed) this._recordHistory(transaction.previous);
+  }
+
+  _recordHistory(previous) {
+    this.undoStack.push(previous);
+    this.redoStack = [];
+    this._trimHistory();
+    this._emitHistoryChanged();
+  }
+
+  _trimHistory() {
+    while (this.undoStack.length > CANVAS_HISTORY_LIMIT) this.undoStack.shift();
+    while (this.redoStack.length > CANVAS_HISTORY_LIMIT) this.redoStack.shift();
+    let totalPoints = [...this.undoStack, ...this.redoStack]
+      .reduce((total, snapshot) => total + snapshot.pointCount, 0);
+    while (totalPoints > CANVAS_HISTORY_POINT_LIMIT && this.undoStack.length + this.redoStack.length > 1) {
+      const stack = this.undoStack.length > 1 ? this.undoStack : this.redoStack;
+      const removed = stack.shift();
+      if (!removed) break;
+      totalPoints -= removed.pointCount;
+    }
+  }
+
+  _emitHistoryChanged() {
+    if (!this.historyChangeListener) return;
+    this.historyChangeListener({
+      canUndo: this.undoStack.length > 0,
+      canRedo: this.redoStack.length > 0,
+    });
   }
 
   _prepareContext(context, ratio = 1) {

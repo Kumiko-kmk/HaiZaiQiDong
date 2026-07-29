@@ -74,6 +74,11 @@ def history_log_path() -> Path:
     return user_data_root() / "logs" / "drawing-history.jsonl"
 
 
+def runtime_log_path() -> Path:
+    """Small rotating log used to diagnose input and drawing state transitions."""
+    return user_data_root() / "logs" / "runtime.log"
+
+
 def _sync_bundled_presets(user_dir: Path) -> None:
     """Refresh managed built-ins without touching legacy/custom JSON files."""
     bundled = bundled_presets_dir()

@@ -76,13 +76,47 @@
           <div class="canvas-toolbar__drag pywebview-drag-region" aria-hidden="true"></div>
           <div class="canvas-toolbar__actions">
             <button class="btn btn--canvas" id="btn-canvas-upload-svg" type="button">上传SVG</button>
-            <button class="btn btn--canvas" id="btn-canvas-clear" type="button">清空画布</button>
             <button class="btn btn--canvas" id="btn-canvas-save" type="button">保存预设</button>
             <button class="btn btn--canvas" id="btn-manage-presets" type="button" disabled>管理预设</button>
           </div>
         </div>
-        <div class="sketch-canvas-wrap" id="sketch-canvas-wrap">
-          <canvas id="sketch-canvas" width="720" height="360" aria-label="自定义预设绘图画布"></canvas>
+        <div class="canvas-workspace">
+          <div class="canvas-tool-rail" role="toolbar" aria-label="画布工具">
+            <button class="canvas-tool-button canvas-tool-button--active" id="btn-canvas-pencil" type="button"
+              data-canvas-tool="draw" aria-label="画笔" aria-pressed="true" title="画笔">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m15.5 5.5 3 3M4 20l4.2-1 10.6-10.6a2.12 2.12 0 0 0-3-3L5.2 16 4 20Z" />
+              </svg>
+            </button>
+            <button class="canvas-tool-button" id="btn-canvas-eraser" type="button"
+              data-canvas-tool="erase" aria-label="橡皮擦" aria-pressed="false" title="橡皮擦">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m4.5 13.5 8.8-8.8a2 2 0 0 1 2.8 0l3.2 3.2a2 2 0 0 1 0 2.8L11 19H8.5l-4-4a1 1 0 0 1 0-1.5Z" />
+                <path d="m9 9 6 6M11 19h9" />
+              </svg>
+            </button>
+            <button class="canvas-tool-button" id="btn-canvas-undo" type="button"
+              aria-label="撤回" title="撤回" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m9 7-5 5 5 5M5 12h8a6 6 0 0 1 6 6" />
+              </svg>
+            </button>
+            <button class="canvas-tool-button" id="btn-canvas-redo" type="button"
+              aria-label="前进" title="前进" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m15 7 5 5-5 5M19 12h-8a6 6 0 0 0-6 6" />
+              </svg>
+            </button>
+            <button class="canvas-tool-button" id="btn-canvas-clear" type="button"
+              aria-label="清空画布" title="清空画布">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16M9 3h6l1 4H8l1-4ZM6.5 7l1 14h9l1-14M10 11v6M14 11v6" />
+              </svg>
+            </button>
+          </div>
+          <div class="sketch-canvas-wrap" id="sketch-canvas-wrap">
+            <canvas id="sketch-canvas" width="720" height="360" aria-label="自定义预设绘图画布"></canvas>
+          </div>
         </div>
       </section>
 
@@ -136,6 +170,7 @@
 
         <div class="settings-actions">
           <div class="settings-actions__drag pywebview-drag-region" aria-hidden="true"></div>
+          <button class="btn btn--outline" id="btn-daily-joke" type="button">今日鸡煲笑话</button>
           <button class="btn btn--outline" id="btn-about" type="button">关于</button>
         </div>
         <div class="settings-drag-fill pywebview-drag-region" aria-hidden="true"></div>
@@ -145,17 +180,30 @@
 
   <div class="toast" id="toast" hidden></div>
 
+  <dialog class="dialog daily-joke-dialog" id="daily-joke-dialog">
+    <span class="dialog-accent" aria-hidden="true"></span>
+    <div class="daily-joke-heading">
+      <h2>今日鸡煲笑话</h2>
+    </div>
+    <div class="daily-joke-content" id="daily-joke-text"></div>
+    <div class="dialog-actions">
+      <button class="btn btn--primary" id="btn-daily-joke-close" type="button">确定</button>
+    </div>
+  </dialog>
+
   <dialog class="dialog" id="about-dialog">
     <span class="dialog-accent" aria-hidden="true"></span>
     <h2>关于</h2>
     <p>HaiZaiQiDong · 还在启动<br />滚轮切换预设；进入预览后用 W/S 缩放、A/D 旋转，左键落点，右键取消。</p>
-    <button class="btn btn--primary" id="btn-about-close" type="button">确定</button>
+    <div class="dialog-actions">
+      <button class="btn btn--primary" id="btn-about-close" type="button">确定</button>
+    </div>
   </dialog>
 
   <dialog class="dialog save-preset-dialog" id="save-preset-dialog">
     <form id="save-preset-form">
       <span class="dialog-accent" aria-hidden="true"></span>
-      <h2>保存自定义预设</h2>
+      <h2 id="save-preset-title">保存自定义预设</h2>
       <label class="dialog-label" for="preset-name-input">预设名称</label>
       <input
         class="dialog-input"
@@ -187,6 +235,7 @@
   <script src="js/preview.js"></script>
   <script src="js/wheel-cards.js"></script>
   <script src="js/canvas-editor.js"></script>
+  <script src="js/daily-joke.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
